@@ -166,7 +166,10 @@ class SessionFacts:
     # emotion (deterministic floor inputs — DESIGN.md §7.3)
     refusal_count: int = 0
     repeated_request_count: int = 0
-    last_intensity: int = 0
+    last_intensity: int = 0     # THIS turn's reading — what directive selection acts on (§7.4)
+    peak_intensity: int = 0     # session-wide max — what the handoff packet reports (§7.6): a caller
+                                 # who was furious two turns ago and has since gone quiet is still a
+                                 # caller a human agent should be told was furious
 
     # last turn's scope classification, persisted so `resolve()` can stay a
     # single-argument function of `state` alone, matching DESIGN.md Appendix A
@@ -297,6 +300,13 @@ class SessionState:
     # Selects a fixture scenario from consent_scenarios.json — a demo/test
     # knob (DESIGN.md §7.10), not something a real caller controls.
     consent_scenario: str = "default"
+    # Transient: this turn's raw caller message, set by transition() before
+    # the caller's Turn is appended to `transcript` (that happens later in
+    # the orchestrator). Exists so resolve() — called between the two — can
+    # still see it, e.g. for the handoff packet (§7.6). Same pattern as
+    # `facts.last_scope`: a turn-scoped signal persisted into state so
+    # resolve() stays a function of `state` alone (Appendix A).
+    current_raw_message: str = ""
 
     def next_turn_index(self) -> int:
         return len(self.transcript)

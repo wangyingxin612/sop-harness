@@ -1,3 +1,5 @@
+import { Fragment } from "react";
+
 const PHASE_ORDER = ["VERIFY_ID", "RESOLVE_INTENT", "PROCESS_CASE", "POST_PROCESS", "CLOSED"];
 const TERMINAL = ["HUMAN_HANDOFF", "ABUSE_TERMINATED"];
 
@@ -115,6 +117,22 @@ function LastTurnDetail({ trace }) {
           {trace.tool_effects.map((t, i) => (
             <div key={i} className="tool-effect">🔧 {t.summary}</div>
           ))}
+        </div>
+      )}
+
+      {trace.plan.visible_facts?.handoff_packet && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 4 }}>
+            Handoff packet — nothing here needs to be repeated to the human
+          </div>
+          <dl className="kv">
+            {Object.entries(trace.plan.visible_facts.handoff_packet).map(([k, v]) => (
+              <Fragment key={k}>
+                <dt>{k.replace(/_/g, " ")}</dt>
+                <dd>{Array.isArray(v) ? (v.length ? v.join("; ") : "—") : String(v ?? "—")}</dd>
+              </Fragment>
+            ))}
+          </dl>
         </div>
       )}
 

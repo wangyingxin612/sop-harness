@@ -444,7 +444,10 @@ required. Notable decisions:
 - **Ambiguous candidates**: if several records match, request further factors until unique, and **never
   reveal that multiple matches exist** — that is itself a disclosure.
 - **Failure messages never name the wrong field** ("that doesn't match our records", not "your DOB is
-  wrong"), to prevent field-by-field enumeration. Attempts are capped at 3 → handoff.
+  wrong"), to prevent field-by-field enumeration. Lockout is exactly the 2-mismatch threshold above —
+  not a separate "N attempts" counter; a softer, non-safety-relevant turn-count valve exists for a caller
+  who is simply stuck (not mismatching, just not progressing), documented in the implementation
+  (`app/sop/spec.py`) rather than duplicated here as a second number that could drift out of sync.
 
 ### 7.3 PERCEIVE — extraction and memory
 

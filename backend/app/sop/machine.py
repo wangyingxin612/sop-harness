@@ -78,6 +78,7 @@ def _apply_emotion_and_abuse_counters(state: SessionState, signals: TurnSignals,
     if signals.escalation_request:
         deterministic_floor = max(deterministic_floor, 2)
     facts.last_intensity = max(signals.intensity, deterministic_floor)
+    facts.peak_intensity = max(facts.peak_intensity, facts.last_intensity)
 
     if signals.scope == ScopeRing.OUT:
         facts.off_topic_strikes += 1
@@ -213,6 +214,7 @@ def transition(state: SessionState, signals: TurnSignals, domain: DomainContext,
     """Pure: returns a new SessionState. Never mutates `state`."""
     new_state = copy.deepcopy(state)
     new_state.facts.turns_used += 1
+    new_state.current_raw_message = signals.raw_message
 
     _record_deferred_signals(new_state, signals)
     _apply_emotion_and_abuse_counters(new_state, signals, spec)

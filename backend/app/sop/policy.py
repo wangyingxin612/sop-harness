@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 
 from app.sop.domain import DomainContext
+from app.sop.handoff import build_handoff_packet
 from app.sop.intent import apply_intent_inference, index_view, merge_case_hints, resolve_candidates
 from app.sop.spec import SopSpec
 from app.sop.types import (
@@ -148,10 +149,13 @@ def resolve(state: SessionState, domain: DomainContext, spec: SopSpec) -> TurnPl
         }[phase]
         terminal_reason = facts.escalation_reason
         directives = _base_directives(spec, phase)
+        packet = build_handoff_packet(state, domain).as_dict() if phase == Phase.HUMAN_HANDOFF else None
         return TurnPlan(
             phase=phase,
             allowed_tools=(),
-            visible_facts={"handoff_packet": None},  # filled by orchestrator (needs domain+state together)
+            # DESIGN.md §7.6: "no transfer is ever empty-handed." The model
+            # never has to re-derive this — it's handed the packet directly.
+            visible_facts={"handoff_packet": packet} if packet else {},
             directives=tuple(directives),
             required_elements=(),
             forbidden_elements=("any claim amount", "any claim status", "any PII value"),

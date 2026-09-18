@@ -67,6 +67,7 @@ def _fold_memory_updates(state: SessionState, memory_updates, turn_index: int) -
     elif facts.refusal_count >= 1:
         deterministic_floor = 1
     facts.last_intensity = max(memory_updates.intensity, deterministic_floor, facts.last_intensity)
+    facts.peak_intensity = max(facts.peak_intensity, facts.last_intensity)
 
 
 def run_turn(

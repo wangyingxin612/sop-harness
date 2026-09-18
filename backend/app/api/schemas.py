@@ -50,6 +50,7 @@ def serialize_state(state: SessionState) -> dict:
             "tokens_used": facts.tokens_used,
             "cost_usd": round(facts.cost_usd, 5),
             "last_intensity": facts.last_intensity,
+            "peak_intensity": facts.peak_intensity,
             "last_scope": facts.last_scope.value,
             "refusal_count": facts.refusal_count,
             "pending_action": facts.pending_action.action_type if facts.pending_action else None,
