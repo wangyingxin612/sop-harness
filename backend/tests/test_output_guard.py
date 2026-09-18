@@ -2,6 +2,8 @@
 like the policy layer. We hand-craft candidate replies the way a model might
 produce them (good and bad) and assert the guard's verdict.
 """
+import pytest
+
 from app.guards.output_guard import check_commitment, check_contract, check_disclosure, check_grounding
 from app.sop.types import Phase, TurnPlan
 
@@ -99,18 +101,43 @@ class TestCommitmentGuard:
         reply = "I can help you with that once I verify a couple more details."
         assert check_commitment(reply) == []
 
-    def test_does_not_false_positive_on_unrelated_ill_get_phrasing(self):
-        """Live-testing regression (PROGRESS.md): 'get' is too generic a verb
-        to be in the promissory list — this sentence is about obtaining
-        consent, not promising a payout."""
-        reply = "I'll need to get her consent before we can discuss any details."
-        assert check_commitment(reply) == []
+    # --- "get": the generic-verb case, pinned in BOTH directions.
+    #
+    # History worth keeping in the test file itself: a live false positive
+    # ("I'll need to get her consent") was first fixed by deleting `get`
+    # from the verb list — which silently introduced a false NEGATIVE on
+    # number-free promises like "you will get the full amount" (L1's
+    # attribution check can't catch those; there's no figure to attribute).
+    # The correct fix constrains `get`'s OBJECT rather than removing the
+    # verb. These two test groups exist so neither direction can regress
+    # again without a test going red.
 
-    def test_still_flags_promise_with_a_short_gap(self):
-        reply = "You will get $1,450."
-        assert check_commitment("You will receive $1,450.") != []  # sanity: the real case still fires
-        # "get" itself is excluded on purpose; this just confirms the exclusion is deliberate, not a
-        # regression in the other verbs.
+    @pytest.mark.parametrize(
+        "reply",
+        [
+            "You'll get $1,450 once this is processed.",
+            "You will get the full amount.",
+            "You'll get paid next week.",
+            "We will get you your refund.",
+            "We'll pay you $1,450.",
+            "I guarantee you will be reimbursed.",
+            "You will receive the payment.",
+        ],
+    )
+    def test_flags_promises_including_generic_get_with_payment_object(self, reply):
+        assert check_commitment(reply), f"should have been flagged: {reply!r}"
+
+    @pytest.mark.parametrize(
+        "reply",
+        [
+            "I will get her consent before we discuss details.",
+            "I'll get that noted on the file for you.",
+            "We'll get a representative on the line.",
+            "I'll need to get the pathology report from your provider.",
+        ],
+    )
+    def test_does_not_flag_get_with_a_non_payment_object(self, reply):
+        assert check_commitment(reply) == [], f"false positive on: {reply!r}"
 
     def test_worked_example_no_commitment_and_no_disclosure(self, domain):
         """The brief's frustrated-caller example: the reply must not disclose

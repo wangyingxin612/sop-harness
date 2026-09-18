@@ -30,14 +30,30 @@ _ATTRIBUTION_MARKERS = (
     "the file shows", "currently shows",
 )
 
-_PROMISE_RE = re.compile(
-    # "get" deliberately excluded — too generic ("I'll need to get her
-    # consent" false-positived in live testing, see PROGRESS.md); the
-    # remaining verbs are specific enough to payment/approval outcomes that
-    # they're worth flagging, and the gap is kept short so an unrelated
-    # intervening clause can't bridge two unrelated words.
+# A promissory speech act = (subject) + (modal/promise verb) + (outcome verb).
+# Two variants, because the outcome verbs split into two classes:
+_PROMISE_SUBJECT_MODAL = (
     r"\b(you|we|i)\b[^.!?]{0,15}\b(will|'ll|shall|guarantee|guarantees|promise|promises|assure|assures)\b"
-    r"[^.!?]{0,20}\b(receive|pay|refund|reimburse|cover|approve|approved)\b",
+)
+
+# (a) Verbs specific enough to a payment/approval outcome that the verb
+#     alone is the signal — no object needed.
+_PROMISE_SPECIFIC_RE = re.compile(
+    _PROMISE_SUBJECT_MODAL + r"[^.!?]{0,20}\b(receive|pay|paid|refund|reimburse|reimbursed|cover|covered|approve|approved)\b",
+    re.IGNORECASE,
+)
+
+# (b) "get" is too generic to flag on its own ("I'll need to get her consent"
+#     is not a promise of money), but it IS the most natural way to phrase a
+#     payout promise ("you'll get the full amount"). So it fires only when
+#     its object is payment-shaped. Dropping the verb entirely — which an
+#     earlier fix did — traded a false positive for a false NEGATIVE on
+#     number-free promises; constraining the object fixes both directions.
+_PROMISE_GENERIC_RE = re.compile(
+    _PROMISE_SUBJECT_MODAL
+    + r"[^.!?]{0,20}\bget\b[^.!?]{0,25}"
+    + r"\b(amount|money|payment|paid|refund|reimbursement|reimbursed|check|cheque|funds|"
+    r"settlement|coverage|covered|approval|approved|balance|difference|full|everything)\b",
     re.IGNORECASE,
 )
 
@@ -158,7 +174,7 @@ def _split_sentences(text: str) -> list[str]:
 
 def check_commitment(reply: str) -> list[str]:
     violations = []
-    if _PROMISE_RE.search(reply):
+    if _PROMISE_SPECIFIC_RE.search(reply) or _PROMISE_GENERIC_RE.search(reply):
         violations.append("promissory language detected (e.g. 'you will receive...') — must attribute to the record instead")
 
     sentences = _split_sentences(reply)
