@@ -1,0 +1,173 @@
+"""FastAPI app (DESIGN.md §10). Serves the API and, in the Docker image,
+the built frontend static files too — one container, one process.
+"""
+from __future__ import annotations
+
+import json
+import time
+import uuid
+from datetime import date
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, StreamingResponse
+from pydantic import BaseModel
+
+from app.config import Settings, load_settings
+from app.llm.provider import LLMProvider
+from app.obs.export import render_transcript_html
+from app.session.orchestrator import run_turn
+from app.session.store import STORE
+from app.sop.domain import DomainContext, load_domain
+from app.sop.spec import SopSpec, load_spec
+from app.sop.types import SessionState
+from app.api.schemas import serialize_state
+
+BACKEND_DIR = Path(__file__).resolve().parents[2]
+SOPS_DIR = BACKEND_DIR / "sops"
+FIXTURES_DIR = BACKEND_DIR / "fixtures"
+CONSENT_PATH = str(FIXTURES_DIR / "consent_scenarios.json")
+
+app = FastAPI(title="SOP Harness API")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # demo scope — a real deployment would scope this to the frontend origin
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+_SETTINGS = load_settings()
+_SPEC_CACHE: dict[str, SopSpec] = {}
+_DOMAIN_CACHE: dict[str, DomainContext] = {}
+
+
+def _get_spec(sop_name: str) -> SopSpec:
+    if sop_name not in _SPEC_CACHE:
+        path = SOPS_DIR / f"{sop_name}.yaml"
+        if not path.exists():
+            raise HTTPException(404, f"unknown SOP: {sop_name}")
+        _SPEC_CACHE[sop_name] = load_spec(path)
+    return _SPEC_CACHE[sop_name]
+
+
+def _get_domain() -> DomainContext:
+    # Single fixture set for this build; keyed for future multi-SOP fixture sets.
+    if "default" not in _DOMAIN_CACHE:
+        _DOMAIN_CACHE["default"] = load_domain(FIXTURES_DIR, now=date.fromisoformat(_SETTINGS.demo_now))
+    return _DOMAIN_CACHE["default"]
+
+
+def _provider_for(session_id: str) -> LLMProvider:
+    override = STORE.api_key_for(session_id)
+    if override:
+        settings = Settings(
+            anthropic_api_key=override,
+            model_strong=_SETTINGS.model_strong,
+            model_fast=_SETTINGS.model_fast,
+            demo_now=_SETTINGS.demo_now,
+            llm_base_url=_SETTINGS.llm_base_url,
+        )
+        return LLMProvider(settings)
+    if not _SETTINGS.anthropic_api_key:
+        raise HTTPException(
+            400,
+            "No API key configured. Set ANTHROPIC_API_KEY on the server, or pass api_key when creating a session.",
+        )
+    return LLMProvider(_SETTINGS)
+
+
+class CreateSessionRequest(BaseModel):
+    sop_name: str = "insurance_claims"
+    consent_scenario: str = "default"
+    api_key: str | None = None
+
+
+class MessageRequest(BaseModel):
+    message: str
+
+
+@app.get("/api/health")
+def health():
+    return {"status": "ok", "has_server_api_key": bool(_SETTINGS.anthropic_api_key)}
+
+
+@app.get("/api/sops")
+def list_sops():
+    return [
+        {"name": p.stem, "display_name": load_spec(p).display_name}
+        for p in sorted(SOPS_DIR.glob("*.yaml"))
+    ]
+
+
+@app.post("/api/sessions")
+def create_session(req: CreateSessionRequest):
+    spec = _get_spec(req.sop_name)  # validates the SOP exists
+    session_id = str(uuid.uuid4())[:8]
+    state = SessionState(session_id=session_id, sop_name=req.sop_name, consent_scenario=req.consent_scenario)
+    STORE.create(state, api_key=req.api_key)
+    return serialize_state(state)
+
+
+@app.get("/api/sessions/{session_id}")
+def get_session(session_id: str):
+    state = STORE.get(session_id)
+    if state is None:
+        raise HTTPException(404, "session not found")
+    return serialize_state(state)
+
+
+@app.get("/api/sessions/{session_id}/export", response_class=HTMLResponse)
+def export_session(session_id: str):
+    state = STORE.get(session_id)
+    if state is None:
+        raise HTTPException(404, "session not found")
+    return render_transcript_html(state)
+
+
+@app.post("/api/sessions/{session_id}/messages")
+def post_message(session_id: str, req: MessageRequest):
+    """SSE stream: the reply is generated and guard-checked synchronously
+    (DESIGN.md §7.11 — nothing is committed to the caller before the guard
+    passes), then delivered progressively for a natural typing feel. This is
+    NOT raw incremental token streaming with mid-stream abort — that
+    architecture is described in DESIGN.md §7.11 as future work; what's
+    delivered here already satisfies the guard-before-emit safety property,
+    which is the property that actually matters."""
+    state = STORE.get(session_id)
+    if state is None:
+        raise HTTPException(404, "session not found")
+
+    spec = _get_spec(state.sop_name)
+    domain = _get_domain()
+    provider = _provider_for(session_id)
+
+    def event_stream():
+        try:
+            result = run_turn(state, req.message, domain, spec, provider, CONSENT_PATH)
+        except Exception as exc:  # noqa: BLE001
+            yield f"event: error\ndata: {json.dumps({'message': str(exc)})}\n\n"
+            return
+
+        STORE.update(result.state)
+        STORE.append_trace(session_id, result.trace_event)
+
+        words = result.reply.split(" ")
+        buffer = ""
+        for i, w in enumerate(words):
+            buffer += (" " if buffer else "") + w
+            yield f"event: token\ndata: {json.dumps({'text': buffer})}\n\n"
+            time.sleep(0.02)
+
+        done_payload = {"reply": result.reply, "state": serialize_state(result.state), "trace_event": result.trace_event}
+        yield f"event: done\ndata: {json.dumps(done_payload, default=str)}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+# --- static frontend, served in the Docker image (DESIGN.md §10) ---
+_FRONTEND_DIST = BACKEND_DIR.parent / "frontend" / "dist"
+if _FRONTEND_DIST.exists():
+    from fastapi.staticfiles import StaticFiles
+
+    app.mount("/", StaticFiles(directory=str(_FRONTEND_DIST), html=True), name="frontend")
