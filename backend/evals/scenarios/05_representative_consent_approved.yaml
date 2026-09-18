@@ -17,6 +17,13 @@ turns:
     expect_phase: PROCESS_CASE
   - user: "Has it come through yet?"
     expect_phase: PROCESS_CASE
+  # The default scenario approves on the 2nd poll (evals/../fixtures/consent_scenarios.json). Exactly
+  # how many turns it takes the model to poll twice varies (sometimes it polls proactively when first
+  # asked to request consent, sometimes only when explicitly asked "has it come through" — both are
+  # reasonable agent behaviors; see EVAL.md §5). This extra nudge keeps the scenario robust to that
+  # variance without weakening what it tests.
+  - user: "Can you check again please?"
+    expect_phase: PROCESS_CASE
 final:
   caller_role: representative
   consent_status: approved

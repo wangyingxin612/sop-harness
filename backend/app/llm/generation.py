@@ -96,12 +96,15 @@ def act(
         system=system,
         messages=messages,
         tools=tool_schemas,
-        # Generous headroom: a reply plus a record_signals tool call (which
-        # has a wide schema) can use more output tokens than expected — a
-        # tighter budget here was observed live truncating mid-sentence and,
-        # worse, silently dropping the record_signals call that hint-replay
-        # depends on. See PROGRESS.md.
-        max_tokens=1024,
+        # Generous headroom: a reply plus a record_signals call AND a
+        # side-effecting tool call (e.g. request_consent) in the same turn
+        # can use more output tokens than expected — observed live both
+        # truncating mid-sentence and (worse) spending the entire budget on
+        # tool-call JSON before any reply text, triggering the guard's
+        # repair path on an otherwise-fine turn. The repair path recovers
+        # correctly either way (that's what it's for), but a wider budget
+        # means it has to less often. See PROGRESS.md.
+        max_tokens=1536,
     )
 
     tool_calls = []

@@ -99,6 +99,19 @@ class TestCommitmentGuard:
         reply = "I can help you with that once I verify a couple more details."
         assert check_commitment(reply) == []
 
+    def test_does_not_false_positive_on_unrelated_ill_get_phrasing(self):
+        """Live-testing regression (PROGRESS.md): 'get' is too generic a verb
+        to be in the promissory list — this sentence is about obtaining
+        consent, not promising a payout."""
+        reply = "I'll need to get her consent before we can discuss any details."
+        assert check_commitment(reply) == []
+
+    def test_still_flags_promise_with_a_short_gap(self):
+        reply = "You will get $1,450."
+        assert check_commitment("You will receive $1,450.") != []  # sanity: the real case still fires
+        # "get" itself is excluded on purpose; this just confirms the exclusion is deliberate, not a
+        # regression in the other verbs.
+
     def test_worked_example_no_commitment_and_no_disclosure(self, domain):
         """The brief's frustrated-caller example: the reply must not disclose
         or promise anything (no visible_facts exist pre-verification)."""

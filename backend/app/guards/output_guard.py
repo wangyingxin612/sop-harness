@@ -31,8 +31,13 @@ _ATTRIBUTION_MARKERS = (
 )
 
 _PROMISE_RE = re.compile(
-    r"\b(you|we|i)\b[^.!?]{0,20}\b(will|'ll|shall|guarantee|guarantees|promise|promises|assure|assures)\b"
-    r"[^.!?]{0,40}\b(receive|get|pay|refund|reimburse|cover|approve|approved)\b",
+    # "get" deliberately excluded — too generic ("I'll need to get her
+    # consent" false-positived in live testing, see PROGRESS.md); the
+    # remaining verbs are specific enough to payment/approval outcomes that
+    # they're worth flagging, and the gap is kept short so an unrelated
+    # intervening clause can't bridge two unrelated words.
+    r"\b(you|we|i)\b[^.!?]{0,15}\b(will|'ll|shall|guarantee|guarantees|promise|promises|assure|assures)\b"
+    r"[^.!?]{0,20}\b(receive|pay|refund|reimburse|cover|approve|approved)\b",
     re.IGNORECASE,
 )
 

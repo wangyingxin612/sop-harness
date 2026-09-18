@@ -15,7 +15,7 @@ they were fixed — useful if you want to see the actual engineering process, no
 The engine (`backend/app/sop/`) is a generic SOP runtime: phases, gates, tool permissions, and disclosure
 scopes are read from a YAML spec (`backend/sops/insurance_claims.yaml`), not hard-coded. Authority over
 *what may happen* lives entirely in deterministic, LLM-free Python (state machine, identity matcher,
-policy resolver, output guard — 118 unit tests, zero model calls); the model only decides *what to say*,
+policy resolver, output guard — 134 unit tests, zero model calls); the model only decides *what to say*,
 inside whatever envelope that code hands it each turn. A FastAPI backend and a React chat+Inspector
 frontend sit on top, so you can watch the SOP enforce itself turn by turn.
 
@@ -79,11 +79,11 @@ graceful-degradation behavior (DESIGN.md §7.10).
 
 ```bash
 cd backend && source .venv/bin/activate   # or ../.venv if using the repo-root venv layout below
-pytest -q                                  # 118 tests, 0 model calls, ~1.5s
+pytest -q                                  # 134 tests, 0 model calls, ~1.5s
 ```
 
 ```bash
-python -m evals.runner                    # 12 scenarios against the real API, ~$0.44, ~4 min
+python -m evals.runner                    # 12 scenarios against the real API, ~$0.47, ~4 min
 python -m evals.runner --id margaret_chen_happy_path   # a single scenario
 python -m evals.runner --tag adversarial               # by tag
 ```
@@ -122,7 +122,7 @@ backend/app/
   obs/        HTML transcript export
 backend/sops/       insurance_claims.yaml — the SOP spec (DESIGN.md §6)
 backend/fixtures/   the provided starter data
-backend/tests/      118 pytest tests, no model calls
+backend/tests/      134 pytest tests, no model calls
 backend/evals/      scenario harness against the real API — scenarios, invariants, runner, report
 frontend/           React chat + Inspector UI (Vite)
 DESIGN.md   EVAL.md   PROGRESS.md

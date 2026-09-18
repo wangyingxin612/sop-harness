@@ -4,8 +4,8 @@ Two independent layers of testing, deliberately kept separate (DESIGN.md §8.4):
 
 | | Layer | What it tests | Model calls | Speed |
 |---|---|---|---|---|
-| 1 | `backend/tests/` (pytest) | The deterministic core — state machine, identity matcher, policy resolver, output guard | **Zero** | 118 tests in ~1.4s |
-| 2 | `backend/evals/` (scenario harness) | The whole system, including real model behavior | Real Anthropic API | ~12 scenarios, ~4 min, ~$0.44 |
+| 1 | `backend/tests/` (pytest) | The deterministic core — state machine, identity matcher, policy resolver, output guard | **Zero** | 134 tests in ~1.5s |
+| 2 | `backend/evals/` (scenario harness) | The whole system, including real model behavior | Real Anthropic API | ~12 scenarios, ~4 min, ~$0.47 |
 
 Layer 1 is a correctness guarantee: these properties hold no matter what any model does, because they
 never touch a model. Layer 2 is a quality measurement: it can regress when a prompt or a model changes,
@@ -20,7 +20,7 @@ guarantees and which are calibration.
 cd backend && source ../.venv/bin/activate && pytest -q
 ```
 
-118 tests, 0 model calls, covers:
+134 tests, 0 model calls, covers:
 
 - **Identity matcher** (17 tests): the brief's worked example, aliases (`Ya Wen Li` / `Yaven Li`), both
   `id_type`s, phone/DOB normalization, ASR-style spoken digits, partial mismatch recovery, 2-mismatch lock,
@@ -91,7 +91,7 @@ A scenario also carries its own **per-turn** (`expect_phase`, `expect_route`) an
 12/12 scenarios passed
 containment_rate:     0.667   (8/12 resolved without reaching a human/abuse terminal phase)
 transfer_attribution: {off_topic_persistence: 1, escalation_or_gate: 3}
-total cost:            $0.44  for the full run  (~$0.037/scenario average)
+total cost:            $0.47  for the full run  (~$0.039/scenario average)
 ```
 
 The 4 non-contained scenarios are exactly the 4 *designed* to reach a terminal phase
@@ -102,9 +102,9 @@ deliberately adversarial-heavy because that's where bugs hide, not a claim about
 
 ## 4. What the live suite found that the unit tests could not
 
-The 118 unit tests passed before the harness ever touched the API. Every one of the following was found
-by running real scenarios against the real model — which is the argument for having this layer at all,
-not just more unit tests:
+The unit tests passed before the harness ever touched the API. Every one of the following was found by
+running real scenarios against the real model — which is the argument for having this layer at all, not
+just more unit tests:
 
 1. **Confirmation-vs-narrowing ordering bug** — a hint and its confirmation arriving on the same turn
    silently dropped the confirmation. Fixed in `machine.py`.
@@ -131,12 +131,22 @@ not just more unit tests:
    not a request for a human) was being classified as an explicit escalation request, triggering an
    immediate handoff that skipped the whole persuasion ladder the bonus requirement asks for. Fixed by
    narrowing the field's schema description to require an unambiguous, explicit ask.
+9. **A false-positive in the commitment guard's promissory-language regex.** "I'll need to get her
+   consent before we can discuss any details" tripped the L2 check — `get` was in the list of
+   payment-outcome verbs, and it's simply too generic a word (see DESIGN.md §7.9's own design intent:
+   L2 is supposed to be a narrow, high-precision closed set). Removed `get`, shortened the match window
+   so an unrelated intervening clause can't bridge two unrelated words.
+10. **`max_tokens=1024` was still sometimes too tight** for a turn combining reply text with two tool
+    calls (`record_signals` *and* a side-effecting tool like `request_consent`) — occasionally the whole
+    budget went to tool-call JSON before any reply text was written, correctly triggering the guard's
+    empty-reply repair path (which recovered every time) but at an avoidable extra round-trip. Raised to
+    1536.
 
-None of these eight were safety failures. Every one degraded to "the agent asks again," "the agent
-declines to answer," or (worst case) "the agent transfers a moment sooner than ideal" — never to a
-wrongful disclosure or a wrongful grant of access. That is the payoff of DESIGN.md §7.3's isolate-
-uncertainty-on-the-low-consequence-path principle: a chain of real, live-discovered bugs during a single
-build session never once broke the one property that had to hold.
+None of these ten were safety failures. Every one degraded to "the agent asks again," "the agent declines
+to answer," or (worst case) "the agent transfers a moment sooner than ideal" — never to a wrongful
+disclosure or a wrongful grant of access. That is the payoff of DESIGN.md §7.3's isolate-uncertainty-
+on-the-low-consequence-path principle: a chain of real, live-discovered bugs during a single build session
+never once broke the one property that had to hold.
 
 ## 5. Honest limitations of this eval layer
 
@@ -149,9 +159,16 @@ build session never once broke the one property that had to hold.
   `evals/reports/baseline.json` is currently how that gets checked, by a human.
 - **Small N.** 12 scenarios is enough to find real bugs and to demonstrate the methodology, not enough to
   produce a statistically confident containment-rate estimate for a production launch decision.
-- **Run-to-run variance exists.** Two scenarios (`representative_consent_approved`, `email_decline`)
-  showed borderline non-determinism across runs during development — a single caller utterance combining
-  two intents (confirm-and-request, or decline-and-close) sometimes resolves in one turn and sometimes
-  needs a follow-up. Both were made more robust (split into clearer turns, strengthened extraction
-  schemas) rather than papered over; the underlying lesson — combined-intent utterances sit closer to a
-  model's decision boundary than single-intent ones — is recorded here rather than hidden.
+- **Run-to-run variance exists, and one instance of it is only mitigated, not eliminated.** Two scenarios
+  (`representative_consent_approved`, `email_decline`) showed borderline non-determinism across runs
+  during development — a single caller utterance combining two intents (confirm-and-request, or
+  decline-and-close) sometimes resolves in one turn and sometimes needs a follow-up. `email_decline` was
+  made robust by fixing real bugs (extraction schema, a prompt rule). `representative_consent_approved`
+  is different: *how many turns it takes the model to poll consent twice* (the `default` fixture scenario
+  approves on the 2nd poll) is a genuine, reasonable judgment call the model makes each run — sometimes it
+  polls proactively the moment consent is requested, sometimes only when later asked "has it come
+  through." Neither choice is wrong. The scenario now includes an extra nudge turn so the script gives the
+  model enough room either way, which is honest scenario engineering, not a prompt patch to force one
+  specific model behavior. The underlying lesson — combined-intent utterances, and multi-step async flows
+  whose pacing the model itself controls, sit closer to a decision boundary than single-intent ones — is
+  recorded here rather than hidden.
