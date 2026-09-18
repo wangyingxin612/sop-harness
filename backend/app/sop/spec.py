@@ -16,6 +16,23 @@ import yaml
 from app.sop.types import Phase, StreamPolicy, Tier
 
 
+# How much WORK a caller has to do before they can answer this phase's
+# typical question. This — not the vertical — is what should drive how long
+# we wait in silence before assuming someone has gone.
+#
+# An earlier version of this idea said "a bank SOP can be configured more
+# patient than an insurance one", which was reaching for a vertical-shaped
+# difference that doesn't exist: "what's your date of birth" takes the same
+# few seconds in both industries, and "go find your pathology report" takes
+# minutes in both. The real vertical-level difference runs the OTHER way and
+# is about security, not patience — see SopSpec.max_session_idle_seconds.
+RESPONSE_EFFORT_SECONDS = {
+    "quick": 90,          # a fact they already know: a date of birth, yes/no
+    "considered": 150,    # a choice or a judgement: which of these claims
+    "offline_task": 300,  # something they must leave the screen to do
+}
+
+
 @dataclass(frozen=True)
 class PhaseSpec:
     id: Phase
@@ -24,6 +41,11 @@ class PhaseSpec:
     stream: StreamPolicy
     model_tier: Tier
     base_directives: tuple[str, ...] = field(default_factory=tuple)
+    response_effort: str = "considered"
+
+    @property
+    def idle_base_seconds(self) -> int:
+        return RESPONSE_EFFORT_SECONDS.get(self.response_effort, RESPONSE_EFFORT_SECONDS["considered"])
 
 
 @dataclass(frozen=True)
@@ -56,6 +78,12 @@ class SopSpec:
     min_distinct_factors: int
     max_mismatches: int
     always_available_tools: tuple[str, ...] = field(default_factory=tuple)
+    # A hard ceiling on total silence, regardless of what the phase's effort
+    # level would otherwise allow. This IS a per-vertical concern, and it cuts
+    # the opposite way to "patience": a verified banking session sitting open
+    # is a security exposure, so a KYC SOP sets this SHORTER than a claims
+    # line does, not longer.
+    max_session_idle_seconds: int = 900
 
     def phase_spec(self, phase: Phase) -> PhaseSpec | None:
         return self.phases.get(phase)
@@ -78,6 +106,7 @@ def load_spec(path: str | Path) -> SopSpec:
             stream=StreamPolicy(p.get("stream", "sentence_gated")),
             model_tier=Tier(p.get("model_tier", "strong")),
             base_directives=tuple(p.get("base_directives", [])),
+            response_effort=p.get("response_effort", "considered"),
         )
 
     esc_raw = raw.get("escalation", {})
@@ -106,4 +135,5 @@ def load_spec(path: str | Path) -> SopSpec:
         min_distinct_factors=identity_raw.get("min_distinct", 3),
         max_mismatches=identity_raw.get("max_mismatches", 2),
         always_available_tools=tuple(raw.get("always_available_tools", [])),
+        max_session_idle_seconds=raw.get("idle", {}).get("max_session_idle_seconds", 900),
     )

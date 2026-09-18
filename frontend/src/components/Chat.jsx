@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { IDLE_COPY } from "../useIdleLadder.js";
+import { idleCopy } from "../useIdleLadder.js";
 
 const SUGGESTIONS = [
   "I'm the policyholder. Margaret Chen, policy POL-9921, DOB 1985-03-15, SSN last four 4472. Calling about my denied healthcare claim from January.",
@@ -23,6 +23,7 @@ export default function Chat({
   sessionReady,
   turnError,
   idleLevel,
+  idleSecondsUntilClose,
   terminal,
   phase,
 }) {
@@ -82,7 +83,7 @@ export default function Chat({
         {idleLevel > 0 && idleLevel < 3 && !turnError && !terminal && (
           <div className="msg-row agent">
             <div className={`bubble idle-nudge ${idleLevel === 2 ? "urgent" : ""}`}>
-              {IDLE_COPY[idleLevel]}
+              {idleCopy(idleLevel, idleSecondsUntilClose)}
             </div>
           </div>
         )}

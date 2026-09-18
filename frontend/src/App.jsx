@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Chat from "./components/Chat.jsx";
 import Inspector from "./components/Inspector.jsx";
-import { closeSession, createSession, exportUrl, listSops, sendMessage } from "./api.js";
+import { closeSession, createSession, exportUrl, listSops, sendMessage, reportEvent } from "./api.js";
 import { useIdleLadder } from "./useIdleLadder.js";
 
 // A caller who has already spent five turns establishing context should never
@@ -50,9 +50,26 @@ export default function App() {
     setNotice("This call was closed after a long silence. The transcript and audit trail are complete.");
   }, [sessionId]);
 
-  const { level: idleLevel, reset: resetIdle } = useIdleLadder({
+  // What the caller is currently looking at — the reply whose reading time
+  // the idle budget has to cover.
+  const lastAgentText = [...messages].reverse().find((m) => m.role === "agent")?.text ?? "";
+
+  const handleIdleEvent = useCallback(
+    (event, payload) => reportEvent(sessionId, event, payload),
+    [sessionId]
+  );
+
+  const {
+    level: idleLevel,
+    reset: resetIdle,
+    budgetSeconds,
+    secondsUntilClose,
+  } = useIdleLadder({
     active: !!sessionId && !busy && !terminal,
+    idlePolicy: state?.idle_policy,
+    lastAgentText,
     onExpire: handleIdleExpire,
+    onEvent: handleIdleEvent,
   });
 
   async function startSession({ silent = false, keepMessages = false } = {}) {
@@ -245,10 +262,11 @@ export default function App() {
           sessionReady={!!sessionId}
           turnError={turnError}
           idleLevel={idleLevel}
+          idleSecondsUntilClose={secondsUntilClose}
           terminal={terminal}
           phase={state?.phase}
         />
-        <Inspector state={state} />
+        <Inspector state={state} idleBudgetSeconds={budgetSeconds} />
       </div>
     </>
   );

@@ -448,3 +448,9 @@ details.dev pre {
   padding: var(--s3); border-radius: var(--r-sm);
   color: var(--text-dim);
 }
+
+/* The idle budget sits under the gate note: same visual weight as the other
+   "why the system is behaving this way" explanations, deliberately quieter
+   than the phase rail above it. */
+.idle-note { margin-top: 6px; opacity: 0.82; }
+.idle-note strong { color: var(--accent); font-variant-numeric: tabular-nums; }

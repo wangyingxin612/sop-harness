@@ -29,12 +29,21 @@ escalation:
 # PROGRESS.md.
 always_available_tools: [transfer_to_human, request_consent]
 
+# How long a silence means before we act on it. The per-phase driver is
+# `response_effort` below — how much WORK the caller has to do to answer, which
+# is a property of the question, not of the industry. This ceiling is the one
+# genuinely vertical-level number: a claims line can afford to wait while
+# someone digs a pathology report out of a drawer.
+idle:
+  max_session_idle_seconds: 900     # 15 min
+
 phases:
   - id: VERIFY_ID
     freedom: STRICT
     stream: buffered              # replies are 1-3 sentences; buffering costs nothing visible (§7.11)
     model_tier: fast              # short, templated-leaning replies; escalate to strong only if needed
     tools: []                     # request_consent is global (always_available_tools, below)
+    response_effort: quick        # "what's your date of birth" — a fact they already know
     base_directives: [VERIFY_RATIONALE, NO_DISCLOSURE]
 
   - id: RESOLVE_INTENT
@@ -42,6 +51,7 @@ phases:
     stream: sentence_gated
     model_tier: strong
     tools: []
+    response_effort: considered   # "which of these four claims" — a choice to make
     base_directives: [CONFIRM_CANDIDATE, INDEX_ONLY]
 
   - id: PROCESS_CASE
@@ -55,6 +65,11 @@ phases:
     # round trip for data that's already local — see PROGRESS.md. Only the
     # genuine side effect is a real tool here.
     tools: [create_followup]
+    # The phase where we routinely ask someone to go and FIND something —
+    # "do you have the pathology report?" sends them to a filing cabinet or a
+    # phone call with their clinic. Nudging that caller at 90 seconds is
+    # interrupting them mid-task.
+    response_effort: offline_task
     base_directives: [GROUNDING_ONLY, NO_COMMITMENT, ALTERNATIVE_LADDER_FIRST, KEEP_THE_CALL_MOVING]
 
   - id: POST_PROCESS
@@ -65,6 +80,7 @@ phases:
     # from structured state (DESIGN.md §7.7) and injected into visible_facts
     # directly, rather than a callable tool.
     tools: [send_summary_email]
+    response_effort: quick        # "send it or skip it" — a yes/no
     base_directives: [OFFER_SUMMARY, CONSENT_REQUIRED, SEND_TO_FILE_ADDRESS_ONLY]
 
   - id: HUMAN_HANDOFF

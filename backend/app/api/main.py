@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from app.config import Settings, load_settings
 from app.llm.provider import LLMProvider
 from app.obs.export import render_transcript_html
+from app.obs.idle_metrics import build_report, record_event
 from app.session.orchestrator import run_turn
 from app.session.store import STORE
 from app.sop.domain import DomainContext, load_domain
@@ -121,6 +122,11 @@ class CreateSessionRequest(BaseModel):
     api_key: str | None = None
 
 
+class ClientEventRequest(BaseModel):
+    event: str
+    payload: dict = {}
+
+
 class MessageRequest(BaseModel):
     message: str
 
@@ -144,7 +150,7 @@ def create_session(req: CreateSessionRequest):
     session_id = str(uuid.uuid4())[:8]
     state = SessionState(session_id=session_id, sop_name=req.sop_name, consent_scenario=req.consent_scenario)
     STORE.create(state, api_key=req.api_key)
-    return serialize_state(state)
+    return serialize_state(state, _get_spec(state.sop_name))
 
 
 @app.get("/api/sessions/{session_id}")
@@ -152,7 +158,7 @@ def get_session(session_id: str):
     state = STORE.get(session_id)
     if state is None:
         raise HTTPException(404, "session not found")
-    return serialize_state(state)
+    return serialize_state(state, _get_spec(state.sop_name))
 
 
 @app.get("/api/sessions/{session_id}/export", response_class=HTMLResponse)
@@ -180,7 +186,48 @@ def close_session(session_id: str, reason: str = "caller_inactive"):
         state.phase = Phase.CLOSED
         state.facts.escalation_reason = reason
         STORE.update(state)
-    return serialize_state(state)
+    return serialize_state(state, _get_spec(state.sop_name))
+
+
+@app.post("/api/sessions/{session_id}/events")
+def post_client_event(session_id: str, req: ClientEventRequest):
+    """Sink for the few facts only the browser knows.
+
+    Whether a tab is visible, and whether someone was mid-sentence when we
+    nudged them, are not observable server-side — and they are exactly the
+    facts needed to tell a well-timed nudge from a rude one. Unknown event
+    names are dropped rather than rejected: an older client that has been
+    left open in a tab should not start throwing errors because the server
+    moved on."""
+    state = STORE.get(session_id)
+    if state is None:
+        raise HTTPException(404, "session_not_found")
+    payload = dict(req.payload)
+    spec = _get_spec(state.sop_name)
+    phase_spec = spec.phase_spec(state.phase)
+    # Stamp the phase and effort level server-side. The client could send
+    # them, but then the metric would be reporting the client's belief about
+    # the policy rather than the policy — and the whole point is to find out
+    # whether the policy is right.
+    payload.setdefault("phase", state.phase.value)
+    if phase_spec is not None:
+        payload.setdefault("response_effort", phase_spec.response_effort)
+    record_event(session_id, req.event, payload)
+    return {"ok": True}
+
+
+@app.get("/api/metrics/idle")
+def idle_metrics():
+    """Whether the current idle budget is actually right — see
+    app/obs/idle_metrics.py for what the two rates mean and which way each
+    one should move the setting."""
+    terminal_phases = (Phase.CLOSED, Phase.HUMAN_HANDOFF, Phase.ABUSE_TERMINATED)
+    terminal_by_session: dict[str, bool] = {}
+    for sid in STORE.list_sessions():
+        st = STORE.get(sid)
+        if st is not None:
+            terminal_by_session[sid] = st.phase in terminal_phases
+    return build_report(terminal_by_session)
 
 
 @app.post("/api/sessions/{session_id}/messages")
@@ -225,7 +272,7 @@ def post_message(session_id: str, req: MessageRequest):
             yield f"event: token\ndata: {json.dumps({'text': buffer})}\n\n"
             time.sleep(0.02)
 
-        done_payload = {"reply": result.reply, "state": serialize_state(result.state), "trace_event": result.trace_event}
+        done_payload = {"reply": result.reply, "state": serialize_state(result.state, spec), "trace_event": result.trace_event}
         yield f"event: done\ndata: {json.dumps(done_payload, default=str)}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")

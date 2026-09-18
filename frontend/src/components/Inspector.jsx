@@ -332,7 +332,30 @@ function TurnCard({ trace }) {
   );
 }
 
-export default function Inspector({ state }) {
+const EFFORT_COPY = {
+  quick: "a fact they already know",
+  considered: "a choice to make",
+  offline_task: "something to go and find",
+};
+
+/** Why the bot is waiting as long as it is — the number plus its derivation,
+ *  because a silence budget nobody can see is a silence budget nobody can
+ *  argue with. The parts are shown separately so it is obvious which one to
+ *  change when the timing is wrong. */
+function IdleNote({ policy, budgetSeconds }) {
+  if (!policy) return null;
+  const readingAndComplexity = Math.max(0, (budgetSeconds ?? 0) - policy.base_seconds);
+  return (
+    <div className="gate-note idle-note">
+      Waiting up to <strong>{budgetSeconds ?? policy.base_seconds}s</strong> before checking in
+      — {policy.base_seconds}s because this phase asks for {EFFORT_COPY[policy.response_effort] || "an answer"}
+      {readingAndComplexity > 0 ? `, +${readingAndComplexity}s to read and act on the last reply` : ""}.
+      Hard cap {Math.round(policy.max_session_idle_seconds / 60)} min.
+    </div>
+  );
+}
+
+export default function Inspector({ state, idleBudgetSeconds }) {
   if (!state) {
     return (
       <aside className="inspector-pane">
@@ -358,6 +381,9 @@ export default function Inspector({ state }) {
         <h3 className="card-title">Where the call is</h3>
         <PhaseRail phase={state.phase} facts={facts} />
         <GateNote phase={state.phase} facts={facts} />
+        {!TERMINALS[state.phase] && (
+          <IdleNote policy={state.idle_policy} budgetSeconds={idleBudgetSeconds} />
+        )}
       </section>
 
       <IdentityCard facts={facts} phoneticUsed={phoneticUsed} />

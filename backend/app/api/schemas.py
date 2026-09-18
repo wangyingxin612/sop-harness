@@ -3,6 +3,7 @@ separate from the dataclasses themselves so app/sop/* has zero web
 dependency (DESIGN.md §5.1: the engine doesn't know an API exists)."""
 from __future__ import annotations
 
+from app.sop.spec import SopSpec
 from app.sop.types import SessionState, Slot
 
 
@@ -26,10 +27,31 @@ def _slot_to_dict(slot: Slot) -> dict:
     }
 
 
-def serialize_state(state: SessionState) -> dict:
+def _idle_policy(state: SessionState, spec: SopSpec | None) -> dict | None:
+    """The silence budget, published so the CLIENT can run the timer.
+
+    The server could run it instead, but the two facts that matter most —
+    is this tab even in front of the person, and are they mid-sentence —
+    only exist in the browser. So the server owns the POLICY (how long a
+    given question is worth waiting for) and the client owns the CLOCK.
+    """
+    if spec is None:
+        return None
+    phase_spec = spec.phase_spec(state.phase)
+    if phase_spec is None:
+        return None
+    return {
+        "response_effort": phase_spec.response_effort,
+        "base_seconds": phase_spec.idle_base_seconds,
+        "max_session_idle_seconds": spec.max_session_idle_seconds,
+    }
+
+
+def serialize_state(state: SessionState, spec: SopSpec | None = None) -> dict:
     facts = state.facts
     memory = state.memory
     return {
+        "idle_policy": _idle_policy(state, spec),
         "session_id": state.session_id,
         "sop_name": state.sop_name,
         "phase": state.phase.value,

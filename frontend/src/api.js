@@ -140,3 +140,23 @@ export async function closeSession(sessionId, reason = "caller_inactive") {
 export function exportUrl(sessionId) {
   return `${BASE}/sessions/${sessionId}/export`;
 }
+
+/**
+ * Fire-and-forget instrumentation. Deliberately never throws and never
+ * blocks: a metrics endpoint that can break a conversation is worse than no
+ * metrics at all, and `keepalive` lets the last event survive the tab being
+ * closed — which is precisely the event we most want to see.
+ */
+export function reportEvent(sessionId, event, payload = {}) {
+  if (!sessionId) return;
+  try {
+    fetch(`${BASE}/sessions/${sessionId}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event, payload }),
+      keepalive: true,
+    }).catch(() => {});
+  } catch {
+    /* instrumentation must never surface to the caller */
+  }
+}

@@ -874,6 +874,78 @@ principle becomes a visible, high-stakes decision inside the demo itself.
 A benign case for contrast: a hint about a *different claim* mentioned during `PROCESS_CASE` simply enters
 memory and feeds the in-phase active-case switch (§7.1). No gate involvement, no special handling.
 
+### 7.13 Silence — what "the caller stopped typing" means
+
+A conversation the caller walks away from is a real failure mode and, before this section existed, an
+unhandled one: the session stayed open forever, the audit trail gained a conversation with no
+conclusion, and a verified session sat unattended on someone's screen. So silence needs a policy. The
+question is what the policy should be a function of.
+
+**The wrong answer, and why it is tempting.** A single timeout is wrong in both directions at once.
+45 seconds is rude after *"do you have the pathology report from your January visit?"* — the caller is
+walking to a filing cabinet — and slow after *"was that a yes?"*. The next temptation is to make it a
+per-vertical setting, which reads well in a config file: *insurance is patient, banking is brisk*. I
+briefly argued for that here, and it does not survive contact with a concrete example. Asking for a
+date of birth does not get harder at a bank; hunting down a utility bill does not get easier at an
+insurer. The vertical is not what varies.
+
+**What varies is what we just asked the person to do.** So the budget is built per phase from the work
+the phase's typical question demands (`response_effort` in the SOP YAML — `quick` / `considered` /
+`offline_task`), plus two client-side terms: how long *our own last reply* takes to read, and how many
+separate things it asked for. We do not get to start the clock on a message the caller has not finished
+reading.
+
+```
+budget = response_effort(phase)        # SOP policy, server-owned
+       + reading_time(last reply)      # ~300ms/word, capped
+       + complexity(last reply)        # extra questions, list items, capped
+```
+
+| phase | effort | why |
+|---|---|---|
+| `VERIFY_ID` | `quick` | a fact they already know |
+| `RESOLVE_INTENT` | `considered` | a choice among their claims |
+| `PROCESS_CASE` | `offline_task` | we routinely send people to find paperwork |
+| `POST_PROCESS` | `quick` | send it or skip it |
+
+These come out **identical in `bank_kyc.yaml`**, which is the point — and
+`tests/test_idle_policy.py` asserts it, so the vertical-patience idea cannot quietly return through
+the phase table.
+
+**There is one genuinely per-vertical number, and it runs the other way.** `max_session_idle_seconds`
+is a hard ceiling on total silence — and a *verified* banking session left open on an unattended screen
+is an exposure a claims-status chat is not. So the KYC SOP sets it **shorter** (7 min vs 15). The
+vertical difference is a security ceiling, not a patience level, which is the opposite of the intuition
+I started with.
+
+**Two clocks, because "idle" means two different things.** The nudge clock pauses when the tab is
+hidden and grants fresh reading time on return — someone who switched to their email to find a claim
+number is doing exactly what we asked, and three stacked *"still there?"* bubbles waiting for them is
+both useless and insulting. The ceiling clock never pauses, because otherwise a hidden tab could hold a
+verified session open indefinitely. UX concession and security guarantee are separate mechanisms, and
+only one of them is negotiable.
+
+**The ladder has consequences** (contact-centre practice, §7.8's escalation shape applied to silence):
+check in → warn *with the actual number of seconds*, not "shortly" → close deterministically, recording
+`caller_inactive`. Stages 1 and 2 are client-side text and cost nothing; stage 3 hits a close endpoint
+with no model call, because whether to hang up is a control-plane decision (§4.1), not a judgement call.
+
+**Why these numbers are instrumented rather than argued.** Every published figure I could find is
+either about voice — where a two-second silence is already awkward, a different problem — or is
+somebody's product intuition stated confidently. The defensible move is to ship a number that is
+*reasoned*, then measure it. `GET /api/metrics/idle` reports two rates that pull in opposite
+directions, so neither can be gamed by moving the timer to an extreme:
+
+- **`nudge_false_positive_rate`** — nudges answered within 8s. That caller was there all along; we
+  interrupted them. Rising ⇒ too impatient.
+- **`abandoned_without_close_rate`** — quiet sessions that never reached a terminal phase. Rising ⇒ the
+  ladder is too slow, or not firing.
+
+Both are broken down by effort level, because the aggregate hides the actionable part: if only `quick`
+phases misfire, the fix is one number, not a more patient product.
+
+---
+
 ---
 
 ## 8. Beyond the brief: what we would build as the product owner
