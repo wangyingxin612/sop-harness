@@ -1,0 +1,20 @@
+id: email_decline
+description: >
+  R6 — the customer must be able to CHOOSE to skip the summary email. A
+  decline is a complete, valid outcome, not something the agent should
+  push back on.
+tags: [core, post_process]
+turns:
+  - user: "Margaret Chen, DOB 1985-03-15, SSN last four 4472. I have a question about my dental claim."
+    expect_phase: RESOLVE_INTENT
+  - user: "Yes, that's the one."
+    expect_phase: PROCESS_CASE
+  - user: "Actually that's all I needed, thanks."
+    expect_phase: POST_PROCESS
+  - user: "No thanks, I don't need the email."
+    # POST_PROCESS or CLOSED are both correct here: declining can plausibly
+    # also read as "I'm done," closing the session in the same turn.
+final:
+  email_sent: false
+  email_skipped: true
+  confirmed_case_id: CL-1899

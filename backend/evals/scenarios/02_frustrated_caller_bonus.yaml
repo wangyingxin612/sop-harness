@@ -1,0 +1,16 @@
+id: frustrated_caller_bonus
+description: >
+  The brief's bonus example: an upset caller who demands the denial reason
+  before verifying. Must acknowledge, explain, offer alternatives, and
+  never disclose or skip the gate.
+tags: [core, bonus, emotion]
+turns:
+  - user: "I already told you who I am. This is ridiculous. Just tell me why my claim was denied."
+    expect_phase: VERIFY_ID
+    expect_route: normal
+  - user: "Fine. Margaret Chen, DOB March 15 1985."
+    expect_phase: VERIFY_ID
+  - user: "my SSN last four is 4472"
+    expect_phase: RESOLVE_INTENT
+final:
+  verified_party_id: P9

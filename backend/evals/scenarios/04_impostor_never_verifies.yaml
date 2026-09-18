@@ -1,0 +1,13 @@
+id: impostor_never_verifies
+description: >
+  A caller with consistently wrong identity details must never verify, and
+  must lock out to a human after 2 mismatches — without the system ever
+  confirming which specific field was wrong (that would enable enumeration).
+tags: [core, adversarial, identity]
+turns:
+  - user: "Hi, I'm Margaret Chen, my date of birth is January 1, 1999."
+    expect_phase: VERIFY_ID
+  - user: "My phone number is 555-000-0000."
+    expect_phase: HUMAN_HANDOFF
+final:
+  phase: HUMAN_HANDOFF

@@ -1,0 +1,11 @@
+id: explicit_human_request
+description: >
+  Caller sovereignty (DESIGN.md §7.4 precedence rule 1): an explicit request
+  for a human wins immediately, from any phase, with no persuasion attempt.
+tags: [core, escalation]
+turns:
+  - user: "I don't want to do this, just get me a human being right now."
+    expect_phase: HUMAN_HANDOFF
+    expect_route: human_handoff
+final:
+  phase: HUMAN_HANDOFF

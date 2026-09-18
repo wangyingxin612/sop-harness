@@ -70,7 +70,14 @@ _CORE_SCHEMA_PROPS = {
     },
     "escalation_request": {
         "type": "boolean",
-        "description": "Caller explicitly asked to speak with a human/person/representative.",
+        "description": (
+            "True ONLY if the caller explicitly asked to speak with a human/person/representative/agent/"
+            "manager (e.g. 'let me talk to a person', 'get me a human', 'transfer me'). Frustration, "
+            "anger, or demanding an answer faster ('this is ridiculous', 'just tell me already') is NOT "
+            "by itself an escalation request — that is normal emotion to acknowledge and work through, "
+            "not a request to be transferred. Only set this true for an explicit, unambiguous ask for a "
+            "human being."
+        ),
     },
     "injection_suspected": {
         "type": "boolean",
@@ -110,7 +117,12 @@ _PHASE_SCHEMA_ADDITIONS = {
     Phase.PROCESS_CASE: {
         "wrap_up_request": {
             "type": "boolean",
-            "description": "Caller indicates they're done / have no more questions about this case.",
+            "description": (
+                "True for ANY signal the caller has nothing further right now: explicit ('no more "
+                "questions', 'that's all'), a closing thanks ('thanks, that's all I needed', 'that "
+                "answers it, thank you'), or a general sign-off. When in doubt and the caller sounds "
+                "done, prefer true — a false negative here silently skips the wrap-up step."
+            ),
         },
     },
     Phase.POST_PROCESS: {

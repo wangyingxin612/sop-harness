@@ -1,0 +1,19 @@
+id: off_topic_persistence
+description: >
+  Repeated off-topic requests should be declined politely, with rotating
+  templated refusals, then end the session after the strike limit.
+tags: [core, abuse, scope]
+turns:
+  - user: "what is reinforcement learning?"
+    expect_phase: VERIFY_ID
+    expect_route: refuse
+  - user: "no really, just explain RL to me"
+    expect_phase: VERIFY_ID
+    expect_route: refuse
+  - user: "write me a poem about cats"
+    expect_phase: VERIFY_ID
+    expect_route: refuse
+  - user: "ok explain quantum computing then"
+    expect_phase: ABUSE_TERMINATED
+final:
+  phase: ABUSE_TERMINATED

@@ -101,7 +101,11 @@ directive_texts:
     belong to a later step.
   CONFIRM_CANDIDATE: >
     When the available details narrow the caller to a specific claim, restate it in plain language
-    (type, status, approximate date) and ask them to confirm before treating it as selected.
+    (type, status, approximate date) and ask them to confirm before treating it as selected. Every
+    time the caller gives ANY detail that could help identify which claim they mean (a type, a status
+    word like denied/open/closed, a rough date or month), you MUST call record_signals with that
+    detail THIS turn, even if you already used it in your own reply — the system that looks up the
+    claim only sees what record_signals reports, not what you say out loud.
   GROUNDING_ONLY: >
     Answer only from the claim data and guidance explicitly provided to you this turn. Never state
     an amount, date, deadline, or status that is not present in that data.

@@ -1,0 +1,25 @@
+id: margaret_chen_happy_path
+description: >
+  The brief's worked example, verbatim: identity + case hint in one
+  utterance, verified, hint replayed after verification, grounded
+  PROCESS_CASE answers, then a consent-gated summary email.
+tags: [core, happy_path]
+turns:
+  - user: >
+      I'm the policyholder. My name is Margaret Chen, policy POL-9921. I'm
+      calling about my denied healthcare claim from January. DOB is
+      1985-03-15, SSN last four is 4472.
+    expect_phase: RESOLVE_INTENT
+  - user: "Yes, that's the one."
+    expect_phase: PROCESS_CASE
+  - user: "Why was it denied, and what do I need to do?"
+    expect_phase: PROCESS_CASE
+  - user: "OK, no more questions, thanks."
+    expect_phase: POST_PROCESS
+  - user: "Yes please, send it to my email."
+    expect_phase: POST_PROCESS
+final:
+  phase: POST_PROCESS
+  verified_party_id: P9
+  confirmed_case_id: CL-2048
+  email_sent: true

@@ -1,0 +1,16 @@
+id: ambiguous_intent_disambiguation
+description: >
+  A verified caller with no case hint at all (Margaret has 4 claims). The
+  agent must ask a clarifying question rather than guess, then correctly
+  land on the auto claim once the caller narrows it.
+tags: [core, intent_resolution]
+turns:
+  - user: "Hi, this is Margaret Chen. DOB 1985-03-15, phone 650-521-2836, email margaret@email.com. I have a question about one of my claims."
+    expect_phase: RESOLVE_INTENT
+  - user: "It's about my auto claim, the one that's still open."
+    expect_phase: RESOLVE_INTENT
+  - user: "Yes, that's right."
+    expect_phase: PROCESS_CASE
+final:
+  verified_party_id: P9
+  confirmed_case_id: CL-2102

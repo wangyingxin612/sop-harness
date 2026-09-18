@@ -1,0 +1,17 @@
+id: alternative_ladder_missing_document
+description: >
+  DESIGN.md §7.6 — the single highest-value containment lever in the
+  fixture set. A caller who can't produce a requested document should be
+  offered the graded alternative path (request a replacement, submit a
+  partial with a note) BEFORE any offer to transfer to a human.
+tags: [core, containment, alternative_ladder]
+turns:
+  - user: "Margaret Chen, DOB 1985-03-15, SSN last four 4472, calling about my denied healthcare claim from January."
+    expect_phase: RESOLVE_INTENT
+  - user: "Yes that's the one."
+    expect_phase: PROCESS_CASE
+  - user: "I don't have the pathology report anymore, what should I do?"
+    expect_phase: PROCESS_CASE
+    expect_route: normal
+final:
+  confirmed_case_id: CL-2048

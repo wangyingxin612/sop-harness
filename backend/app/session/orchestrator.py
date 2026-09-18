@@ -138,6 +138,7 @@ def run_turn(
         "turn_index": turn_index,
         "phase_before": state.phase.value,
         "phase_after": new_state.phase.value,
+        "_reply": act_output.reply,  # for eval invariants (evals/invariants.py); not shown in the Inspector as a duplicate field
         "signals": _signals_for_trace(signals),
         "plan": {
             "allowed_tools": list(plan.allowed_tools),
@@ -146,6 +147,7 @@ def run_turn(
             "forbidden_elements": list(plan.forbidden_elements),
             "model_tier": plan.model_tier.value,
             "route": plan.route,
+            "visible_facts": plan.visible_facts,  # for the Inspector (D3) and eval invariants
         },
         "guard_attempts": guard_attempts,
         "tool_effects": [

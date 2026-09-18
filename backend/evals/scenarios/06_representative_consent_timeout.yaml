@@ -1,0 +1,22 @@
+id: representative_consent_timeout
+description: >
+  Same representative flow, but the consent poll never approves (the
+  `timeout` fixture scenario). The agent must degrade gracefully: share
+  what's allowed without consent (status, documents, deadline) and withhold
+  the denial narrative and dollar amounts, rather than stalling silently.
+tags: [core, representative, consent, adversarial]
+consent_scenario: timeout
+turns:
+  - user: >
+      Hi, I'm David Chen, calling about my mom Margaret Chen's claim. Her
+      name is Margaret Chen, DOB 1985-03-15, SSN last four 4472. Why was
+      her claim denied?
+    expect_phase: RESOLVE_INTENT
+  - user: "Yes that's right. Can you request her consent so we can go over the details?"
+    expect_phase: PROCESS_CASE
+  - user: "Has it come through yet?"
+  - user: "Still nothing? It's been a while, can we try again"
+  - user: "How about now"
+  - user: "OK, what can you tell me without her consent then?"
+final:
+  caller_role: representative

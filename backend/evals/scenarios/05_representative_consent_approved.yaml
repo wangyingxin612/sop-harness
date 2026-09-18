@@ -1,0 +1,22 @@
+id: representative_consent_approved
+description: >
+  A representative (David Chen, authorized for Margaret/P9) verifies against
+  the policyholder's factors, gets a reduced-scope answer, requests consent,
+  and receives full detail once the (default scenario) consent approves.
+tags: [core, representative, consent]
+consent_scenario: default
+turns:
+  - user: >
+      Hi, I'm David Chen, calling about my mom Margaret Chen's claim. Her
+      name is Margaret Chen, DOB 1985-03-15, SSN last four 4472. Why was
+      her claim denied?
+    expect_phase: RESOLVE_INTENT
+  - user: "Yes that's right."
+    expect_phase: PROCESS_CASE
+  - user: "Can you request her consent so we can go over the full details?"
+    expect_phase: PROCESS_CASE
+  - user: "Has it come through yet?"
+    expect_phase: PROCESS_CASE
+final:
+  caller_role: representative
+  consent_status: approved

@@ -1,0 +1,14 @@
+id: self_correction_dob
+description: >
+  The caller misstates a date of birth, then immediately self-corrects
+  (DESIGN.md §7.3 — the most commonly missed case in identity collection).
+  Must still verify cleanly with the corrected value, without a stray
+  mismatch from the first (retracted) statement blocking verification.
+tags: [core, identity, self_correction]
+turns:
+  - user: "Margaret Chen, born 1985-03-16 — sorry, that's wrong, it's 1985-03-15. Policy POL-9921."
+    expect_phase: VERIFY_ID
+  - user: "SSN last four is 4472"
+    expect_phase: RESOLVE_INTENT
+final:
+  verified_party_id: P9
