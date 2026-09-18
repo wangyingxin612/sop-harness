@@ -10,7 +10,6 @@ dependencies = [
     "anthropic>=0.40",
     "pydantic>=2.9",
     "python-dotenv>=1.0",
-    "sse-starlette>=2.1",
 ]
 
 [project.optional-dependencies]

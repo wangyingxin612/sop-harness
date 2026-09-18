@@ -1,0 +1,10 @@
+services:
+  sop-harness:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?set ANTHROPIC_API_KEY in your shell or a .env file}
+      MODEL_STRONG: ${MODEL_STRONG:-claude-sonnet-5}
+      MODEL_FAST: ${MODEL_FAST:-claude-haiku-4-5-20251001}
+      DEMO_NOW: ${DEMO_NOW:-2026-02-20}

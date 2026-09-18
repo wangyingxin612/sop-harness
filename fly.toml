@@ -1,0 +1,25 @@
+# Fly.io app config. `app` must be globally unique — `fly launch` will
+# prompt to rename it (or edit this file) if "sop-harness-demo" is taken.
+app = "sop-harness-demo"
+primary_region = "sjc"
+
+[build]
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "15s"
+    method = "GET"
+    timeout = "5s"
+    path = "/api/health"
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1
