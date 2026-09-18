@@ -62,7 +62,12 @@ def serialize_state(state: SessionState) -> dict:
         "memory": {
             "identity_slots": {k: _slot_to_dict(v) for k, v in memory.identity_slots.items()},
             "case_hints": [
-                {"case_type": h.case_type, "status": h.status, "time_ref": h.time_ref, "turn_index": h.turn_index}
+                {
+                    "case_type": h.case_type,
+                    "status": h.status,
+                    "time_ref": h.time_ref,
+                    "verbatim_quote": h.verbatim_quote,
+                }
                 for h in memory.case_hints
             ],
             "candidate_case_id": memory.candidate_case_id,

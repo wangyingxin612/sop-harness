@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { IDLE_COPY } from "../useIdleLadder.js";
 
 const SUGGESTIONS = [
   "I'm the policyholder. Margaret Chen, policy POL-9921, DOB 1985-03-15, SSN last four 4472. Calling about my denied healthcare claim from January.",
@@ -17,10 +18,11 @@ export default function Chat({
   streamingText,
   onSend,
   onRetry,
+  onActivity,
   disabled,
   sessionReady,
   turnError,
-  idleNudge,
+  idleLevel,
   terminal,
   phase,
 }) {
@@ -29,7 +31,7 @@ export default function Chat({
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, streamingText, turnError, idleNudge]);
+  }, [messages, streamingText, turnError, idleLevel]);
 
   function submit(e) {
     e?.preventDefault();
@@ -74,10 +76,13 @@ export default function Chat({
           </div>
         )}
 
-        {idleNudge && !turnError && !terminal && (
+        {/* The nudge is keyed to the idle LADDER, and typing counts as
+            activity — the first version told people who were mid-sentence to
+            please start typing, and then did nothing at all afterwards. */}
+        {idleLevel > 0 && idleLevel < 3 && !turnError && !terminal && (
           <div className="msg-row agent">
-            <div className="bubble idle-nudge">
-              Still there? I'll keep your place — just type whenever you're ready.
+            <div className={`bubble idle-nudge ${idleLevel === 2 ? "urgent" : ""}`}>
+              {IDLE_COPY[idleLevel]}
             </div>
           </div>
         )}
@@ -103,7 +108,11 @@ export default function Chat({
             placeholder={sessionReady ? "Type a message…" : "Create a session first"}
             value={input}
             disabled={!sessionReady || disabled}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              setInput(e.target.value);
+              onActivity?.();     // typing IS activity, not just sending
+            }}
+            onFocus={() => onActivity?.()}
           />
           <button type="submit" className="btn btn-primary" disabled={!sessionReady || disabled}>
             {disabled ? "…" : "Send"}

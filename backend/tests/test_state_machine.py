@@ -399,3 +399,39 @@ def test_representative_lookup_survives_asr_noise(domain, spec):
     assert state.facts.caller_role.value == "representative"
     assert state.facts.representative_of_party_id == "P9"
     assert state.facts.verification_status == VerificationStatus.VERIFIED
+
+
+def test_repeated_identical_hints_are_recorded_once(domain, spec):
+    """The model re-reports the same hint every turn because the directive
+    asks it to. Memory absorbs that; four copies of one hint is noise, and
+    it surfaced in the inspector as a meaningless list of turn indices."""
+    state = make_state()
+    msg = "my denied healthcare claim from January"
+    for i in range(4):
+        state = transition(
+            state,
+            verify_signals(
+                case_hint=CaseHint(case_type="healthcare", status="denied", time_ref="January", verbatim_quote=msg),
+                raw_message=msg,
+                turn_index=i,
+            ),
+            domain,
+            spec,
+        )
+    assert len(state.memory.case_hints) == 1
+    assert state.memory.case_hints[0].turn_index == 0   # the first mention, with its quote
+
+
+def test_a_genuinely_new_hint_is_still_recorded(domain, spec):
+    state = make_state()
+    state = transition(
+        state,
+        verify_signals(case_hint=CaseHint(case_type="healthcare", verbatim_quote="my healthcare claim")),
+        domain, spec,
+    )
+    state = transition(
+        state,
+        verify_signals(case_hint=CaseHint(case_type="healthcare", status="denied", verbatim_quote="the denied one"), turn_index=1),
+        domain, spec,
+    )
+    assert len(state.memory.case_hints) == 2

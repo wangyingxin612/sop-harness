@@ -252,6 +252,18 @@ select:focus-visible, input:focus-visible {
   background: transparent; border: 1px dashed var(--border);
   color: var(--text-faint); font-style: italic;
 }
+.bubble.idle-nudge.urgent { border-color: var(--locked); color: var(--locked); }
+
+.locked-setting {
+  display: flex; align-items: center; gap: var(--s2);
+  padding: 5px var(--s3);
+  background: var(--bg-sunken); border: 1px solid var(--border-soft);
+  border-radius: var(--r-sm);
+  font-size: 12px;
+}
+.locked-setting-val { color: var(--text-dim); }
+.locked-setting-val + .locked-setting-val::before { content: "·"; margin-right: var(--s2); color: var(--text-faint); }
+.locked-setting-hint { font-size: 10.5px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.05em; }
 
 .chat-input-row {
   display: flex; gap: var(--s2);

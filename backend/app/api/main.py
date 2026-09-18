@@ -21,7 +21,7 @@ from app.session.orchestrator import run_turn
 from app.session.store import STORE
 from app.sop.domain import DomainContext, load_domain
 from app.sop.spec import SopSpec, load_spec
-from app.sop.types import SessionState
+from app.sop.types import Phase, SessionState
 from app.api.schemas import serialize_state
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -161,6 +161,26 @@ def export_session(session_id: str):
     if state is None:
         raise HTTPException(404, "session not found")
     return render_transcript_html(state)
+
+
+@app.post("/api/sessions/{session_id}/close")
+def close_session(session_id: str, reason: str = "caller_inactive"):
+    """Close a session without a model call.
+
+    An abandoned call still has to END — leaving it open forever is how a
+    contact centre loses a line and an audit trail gains a conversation with
+    no conclusion. The close is deterministic (no model, no cost): the state
+    machine moves to CLOSED and the reason is recorded, which is exactly the
+    kind of decision DESIGN.md §4.1 says belongs in code rather than in a
+    model's judgement."""
+    state = STORE.get(session_id)
+    if state is None:
+        raise HTTPException(404, "session_not_found")
+    if state.phase not in (Phase.CLOSED, Phase.HUMAN_HANDOFF, Phase.ABUSE_TERMINATED):
+        state.phase = Phase.CLOSED
+        state.facts.escalation_reason = reason
+        STORE.update(state)
+    return serialize_state(state)
 
 
 @app.post("/api/sessions/{session_id}/messages")

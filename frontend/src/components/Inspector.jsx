@@ -167,16 +167,6 @@ function groupBySource(slots) {
   return [...byQuote.entries()];
 }
 
-function dedupeHints(hints) {
-  const byText = new Map();
-  for (const h of hints) {
-    const text = [h.case_type, h.status, h.time_ref].filter(Boolean).join(" · ") || "—";
-    if (!byText.has(text)) byText.set(text, { text, turns: [] });
-    byText.get(text).turns.push(h.turn_index);
-  }
-  return [...byText.values()];
-}
-
 function EvidenceCard({ memory }) {
   const slots = Object.entries(memory.identity_slots);
   const nothing =
@@ -211,12 +201,17 @@ function EvidenceCard({ memory }) {
           <div className="evidence-head">
             <span className="evidence-key">claim hints</span>
           </div>
-          {dedupeHints(memory.case_hints).map((h, i) => (
-            <div key={i} className="evidence-val" style={{ fontSize: 12.5, fontWeight: 500 }}>
-              {h.text}
-              <span className="muted" style={{ fontStyle: "normal", marginLeft: 6 }}>
-                {h.turns.length > 1 ? `turns ${h.turns.join(", ")}` : `turn ${h.turns[0]}`}
-              </span>
+          {/* Shows where the hint CAME FROM, not an internal transcript
+              index. "turns 0, 2, 8, 10" was meaningless to anyone: those are
+              positions in a list that counts both sides of the conversation,
+              and they were only there because the same hint was being
+              recorded repeatedly (now deduped in the state machine). */}
+          {memory.case_hints.map((h, i) => (
+            <div key={i}>
+              <div className="evidence-val" style={{ fontSize: 12.5, fontWeight: 500 }}>
+                {[h.case_type, h.status, h.time_ref].filter(Boolean).join(" · ") || "—"}
+              </div>
+              {h.verbatim_quote && <div className="evidence-quote">“{h.verbatim_quote}”</div>}
             </div>
           ))}
         </div>

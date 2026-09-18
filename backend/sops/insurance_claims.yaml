@@ -55,7 +55,7 @@ phases:
     # round trip for data that's already local — see PROGRESS.md. Only the
     # genuine side effect is a real tool here.
     tools: [create_followup]
-    base_directives: [GROUNDING_ONLY, NO_COMMITMENT, ALTERNATIVE_LADDER_FIRST]
+    base_directives: [GROUNDING_ONLY, NO_COMMITMENT, ALTERNATIVE_LADDER_FIRST, KEEP_THE_CALL_MOVING]
 
   - id: POST_PROCESS
     freedom: OPEN
@@ -113,6 +113,11 @@ directive_texts:
     Never promise a specific payment, approval, or outcome. State only what the record currently
     shows, attributed to the record (for example "the record shows..." or "on file, the allowed
     maximum is..."), never as a promise of what the caller will receive.
+  KEEP_THE_CALL_MOVING: >
+    Answering the question is not the end of your turn. Close every reply with something that moves
+    the call forward — the next concrete step, a question that narrows what they still need, or a
+    check on whether the matter is settled. A caller should never be left holding a silence,
+    wondering whose turn it is.
   ALTERNATIVE_LADDER_FIRST: >
     If the caller cannot provide a requested document, offer the graded alternative path before
     suggesting a human transfer: first a replacement copy from the original source, then a partial

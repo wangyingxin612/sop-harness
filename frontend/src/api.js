@@ -129,6 +129,14 @@ export async function sendMessage(sessionId, message, { onToken, onDone, onError
   }
 }
 
+export async function closeSession(sessionId, reason = "caller_inactive") {
+  const r = await fetch(`${BASE}/sessions/${sessionId}/close?reason=${encodeURIComponent(reason)}`, {
+    method: "POST",
+  });
+  if (!r.ok) return null;
+  return r.json();
+}
+
 export function exportUrl(sessionId) {
   return `${BASE}/sessions/${sessionId}/export`;
 }

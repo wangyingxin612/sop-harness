@@ -39,7 +39,18 @@ def _record_deferred_signals(state: SessionState, signals: TurnSignals) -> None:
     if signals.case_hint is not None:
         hint = signals.case_hint
         hint.turn_index = signals.turn_index
-        state.memory.case_hints.append(hint)
+        # Record each DISTINCT hint once. RESOLVE_INTENT's directive asks the
+        # model to report hints whenever the caller gives one, so it re-reports
+        # the same hint every turn; without this, memory fills with copies and
+        # the inspector showed "healthcare · denied · January" four times over.
+        # The first mention is the one worth keeping — it's the one with the
+        # provenance quote that actually established the hint.
+        already = any(
+            h.case_type == hint.case_type and h.status == hint.status and h.time_ref == hint.time_ref
+            for h in state.memory.case_hints
+        )
+        if not already:
+            state.memory.case_hints.append(hint)
 
     if signals.intent and signals.intent_confidence >= INTENT_CONFIDENCE_THRESHOLD:
         state.memory.resolved_intent = signals.intent

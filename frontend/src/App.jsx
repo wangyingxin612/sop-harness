@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Chat from "./components/Chat.jsx";
 import Inspector from "./components/Inspector.jsx";
-import { createSession, exportUrl, listSops, sendMessage } from "./api.js";
+import { closeSession, createSession, exportUrl, listSops, sendMessage } from "./api.js";
+import { useIdleLadder } from "./useIdleLadder.js";
 
 // A caller who has already spent five turns establishing context should never
 // be told to start over. Everything below exists to honour that: the
 // transcript lives in the client, a failed turn keeps its message and offers
 // a one-click retry, and a session the server has forgotten is re-created
 // silently with the history still on screen.
-const IDLE_NUDGE_MS = 45_000;
 
 export default function App() {
   const [sops, setSops] = useState([]);
@@ -24,10 +24,8 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [turnError, setTurnError] = useState(null);   // { kind, retryable, message }
   const [notice, setNotice] = useState(null);
-  const [idleNudge, setIdleNudge] = useState(false);
 
   const pendingMessage = useRef(null);   // the message a retry would resend
-  const idleTimer = useRef(null);
 
   // Dark by default — this is an operations instrument, not a consumer chat
   // app — but the preference is remembered and respected.
@@ -43,21 +41,19 @@ export default function App() {
       .catch(() => setSops([{ name: "insurance_claims", display_name: "Insurance Claims Support" }]));
   }, []);
 
-  // Idle handling. A real contact centre checks in rather than sitting
-  // silently; this is the text equivalent, done client-side so an idle
-  // caller costs nothing (no model call just to say "still there?").
-  const resetIdleTimer = useCallback(() => {
-    setIdleNudge(false);
-    if (idleTimer.current) clearTimeout(idleTimer.current);
-    const terminal = ["CLOSED", "HUMAN_HANDOFF", "ABUSE_TERMINATED"];
-    if (!sessionId || busy || terminal.includes(state?.phase)) return;
-    idleTimer.current = setTimeout(() => setIdleNudge(true), IDLE_NUDGE_MS);
-  }, [sessionId, busy, state?.phase]);
+  const terminal = ["CLOSED", "HUMAN_HANDOFF", "ABUSE_TERMINATED"].includes(state?.phase);
 
-  useEffect(() => {
-    resetIdleTimer();
-    return () => idleTimer.current && clearTimeout(idleTimer.current);
-  }, [resetIdleTimer, messages.length]);
+  const handleIdleExpire = useCallback(async () => {
+    if (!sessionId) return;
+    const closed = await closeSession(sessionId, "caller_inactive");
+    if (closed) setState(closed);
+    setNotice("This call was closed after a long silence. The transcript and audit trail are complete.");
+  }, [sessionId]);
+
+  const { level: idleLevel, reset: resetIdle } = useIdleLadder({
+    active: !!sessionId && !busy && !terminal,
+    onExpire: handleIdleExpire,
+  });
 
   async function startSession({ silent = false, keepMessages = false } = {}) {
     const s = await createSession({ sopName, consentScenario, apiKey });
@@ -103,7 +99,7 @@ export default function App() {
     setBusy(true);
     setTurnError(null);
     setNotice(null);
-    setIdleNudge(false);
+    resetIdle();
     pendingMessage.current = text;
     setMessages((m) => [...m, { role: "caller", text }]);
 
@@ -143,8 +139,6 @@ export default function App() {
     await handleSend(text);
   }
 
-  const terminal = ["CLOSED", "HUMAN_HANDOFF", "ABUSE_TERMINATED"].includes(state?.phase);
-
   return (
     <>
       <header className="app-header">
@@ -156,26 +150,42 @@ export default function App() {
           </span>
         </div>
 
-        <div className="field-group">
-          <label>SOP</label>
-          <select value={sopName} onChange={(e) => setSopName(e.target.value)} disabled={!!sessionId}>
-            {sops.map((s) => (
-              <option key={s.name} value={s.name}>{s.display_name}</option>
-            ))}
-          </select>
-        </div>
+        {/* Both of these are locked once a call is under way — you can't swap
+            the procedure or the fixture mid-conversation. Previously they were
+            just `disabled`, which reads as broken rather than as deliberate,
+            so a locked control now says so and says how to unlock it. */}
+        {sessionId ? (
+          <div className="locked-setting" title="Settings are fixed for the duration of a call — start a new session to change them">
+            <span className="locked-setting-val">{sops.find((s) => s.name === sopName)?.display_name || sopName}</span>
+            <span className="locked-setting-val">
+              consent: {consentScenario === "default" ? "approves" : "never approves"}
+            </span>
+            <span className="locked-setting-hint">locked for this call</span>
+          </div>
+        ) : (
+          <>
+            <div className="field-group">
+              <label title="Which procedure the agent must follow. Each SOP is a YAML spec — see backend/sops/">
+                Procedure
+              </label>
+              <select value={sopName} onChange={(e) => setSopName(e.target.value)}>
+                {sops.map((s) => (
+                  <option key={s.name} value={s.name}>{s.display_name}</option>
+                ))}
+              </select>
+            </div>
 
-        <div className="field-group">
-          <label>Consent</label>
-          <select
-            value={consentScenario}
-            onChange={(e) => setConsentScenario(e.target.value)}
-            disabled={!!sessionId}
-          >
-            <option value="default">approves</option>
-            <option value="timeout">never approves</option>
-          </select>
-        </div>
+            <div className="field-group">
+              <label title="A test fixture, not a live system: when an authorised representative asks to discuss someone else's claim, does the policyholder's consent come back approved, or never arrive? Pick 'never approves' to see the agent degrade gracefully instead of stalling.">
+                Consent test ⓘ
+              </label>
+              <select value={consentScenario} onChange={(e) => setConsentScenario(e.target.value)}>
+                <option value="default">approves on 2nd check</option>
+                <option value="timeout">never approves</option>
+              </select>
+            </div>
+          </>
+        )}
 
         {showKeyField ? (
           <div className="field-group">
@@ -230,10 +240,11 @@ export default function App() {
           streamingText={streamingText}
           onSend={handleSend}
           onRetry={handleRetry}
+          onActivity={resetIdle}
           disabled={busy}
           sessionReady={!!sessionId}
           turnError={turnError}
-          idleNudge={idleNudge}
+          idleLevel={idleLevel}
           terminal={terminal}
           phase={state?.phase}
         />
