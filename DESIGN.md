@@ -994,7 +994,7 @@ four-day budget.
 | **P1** | **Audit export (JSONL + HTML) + PHI access log** | Compliance is the actual purchase decision; near-free given tracing | D3 |
 | **P1** | **Cost accounting + static tier routing + prompt caching** | The "affordable" half of the mission, with numbers instead of adjectives | D3 |
 | **P1** | **Representative + asynchronous consent (incl. timeout)** | Two fixture files exist solely for it; the timeout branch is where graceful degradation is proven | D2 |
-| **P2** | Second SOP (`bank_kyc.yaml`) + live switch | Cheap once §6 is real, and it is the whole generality argument | D4 |
+| **P2** | Second SOP (`bank_kyc.yaml`) + live switch | Cheap once §6 is real, and it is the whole generality argument | D4 — **done, honestly scoped**: proves the control layer (spec.py/machine.py — phases, gates, freedom, tool permissions, escalation, directives) has zero insurance-specific code, checked by `tests/test_bank_kyc_spec.py` including a static import-graph assertion. Does **not** yet prove the full runtime is pluggable — `policy.py`'s visible-facts assembly still calls insurance-shaped domain functions, so a `bank_kyc` session verifies identity correctly and then reads insurance fixture data past that point. A real second vertical additionally needs a small pluggable domain-adapter interface (the "DOMAIN ADAPTER" box in §5.1 was already drawn separately from "SOP SPEC" for this reason) — that abstraction is scoped, not built. |
 | **P2** | Replay / time-travel debugging | Strong engineering signal; small once tracing exists | D4 |
 | **P2** | LLM judge for empathy/naturalness | Needed to claim R9 quantitatively rather than by demo | D3 |
 | **P2** | ASR-noise eval axis | Very cheap, and shows we read the fixtures as a product spec | D3 |
@@ -1036,7 +1036,9 @@ Design review removed six things we had designed ourselves. Recorded because the
   **`make demo`** (the scripted walkthrough below).
 - **Demo script**: the brief's Margaret Chen scenario end to end, then the adversarial branch ("I already
   told you who I am, this is ridiculous"), then the representative + consent-timeout branch, then the
-  off-topic branch, then a live switch to `bank_kyc.yaml`.
+  off-topic branch. `bank_kyc.yaml` can be selected too (proves the config layer is generic — see §9.2's
+  honestly-scoped note); the UI says plainly that case resolution still reads insurance fixture data
+  past identity verification, since no bank domain adapter exists yet.
 
 ---
 

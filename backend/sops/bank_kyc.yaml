@@ -1,0 +1,146 @@
+# SOP spec for bank account-opening KYC (DESIGN.md §9.2 P2, §6).
+#
+# This file exists to make a falsifiable claim checkable: that the SPEC
+# LAYER (this file's shape, and everything app/sop/spec.py reads from it —
+# phases, gates, freedom levels, tool permissions, streaming policy,
+# escalation thresholds, refusal templates, directive text) has zero
+# insurance-specific assumptions baked into the loader or the phase
+# machine. `spec.py` never imports `app.sop.domain`; `machine.py` and
+# `policy.py`'s CONTROL flow (gate evaluation, phase transitions, directive
+# precedence, empathy-prepend, disclosure scoping BY PHASE) read only from
+# a loaded SopSpec + SessionState, never from insurance vocabulary.
+#
+# HONEST SCOPE, stated once here rather than implied: the DATA PLANE is not
+# yet pluggable. `policy.py`'s PROCESS_CASE/RESOLVE_INTENT/POST_PROCESS
+# branches still call insurance-shaped functions (`domain.claims_for_party`,
+# `build_claim_view`, the guideline KB) to assemble `visible_facts`, because
+# there is no bank fixture data or KYC-specific domain adapter behind this
+# file. This spec loads and validates cleanly (see
+# tests/test_bank_kyc_spec.py) and demonstrates the CONFIG surface a new
+# vertical would author; making it actually *run* a conversation would
+# additionally need a small `BankDomainContext` (risk flags, application
+# status, document checklist — the KYC analogue of app/sop/domain.py) and a
+# pluggable visible-facts builder per SOP, which is real, estimable, but
+# not-yet-built work — DESIGN.md's own architecture diagram (§5.1) already
+# draws the "DOMAIN ADAPTER" as a box separate from "SOP SPEC (data)" for
+# exactly this reason.
+
+name: bank_kyc
+display_name: "Bank Account Opening — KYC"
+
+identity:
+  # A bank's KYC identity set differs from an insurer's (a government-issued
+  # ID number and a mailing address matter more than a phone/email on file)
+  # — the point being that this is per-vertical DATA, not a hardcoded list
+  # the engine assumes. See app/identity/matcher.py: the factor TYPES are a
+  # spec-level constant, not compiled into the matching logic.
+  factors: [full_name, dob, phone, email, id_last4]
+  min_distinct: 3
+  max_mismatches: 2
+
+escalation:
+  max_off_topic_strikes: 2        # a bank's compliance tolerance for off-topic drift is tighter
+  max_injection_flags: 2
+  off_topic_decay_after_turns: 3
+  max_stalled_verify_turns: 5
+
+always_available_tools: [transfer_to_human]
+
+phases:
+  - id: VERIFY_ID
+    freedom: STRICT
+    stream: buffered
+    model_tier: fast
+    tools: []
+    base_directives: [VERIFY_RATIONALE, NO_DISCLOSURE]
+
+  - id: RESOLVE_INTENT
+    freedom: OPEN
+    stream: sentence_gated
+    model_tier: strong
+    tools: []
+    base_directives: [CONFIRM_CANDIDATE, INDEX_ONLY]
+
+  - id: PROCESS_CASE
+    freedom: OPEN
+    stream: sentence_gated
+    model_tier: strong
+    tools: [create_followup]
+    base_directives: [GROUNDING_ONLY, NO_COMMITMENT, KYC_DISCLOSURE_LIMITS]
+
+  - id: POST_PROCESS
+    freedom: OPEN
+    stream: sentence_gated
+    model_tier: strong
+    tools: [send_summary_email]
+    base_directives: [OFFER_SUMMARY, CONSENT_REQUIRED, SEND_TO_FILE_ADDRESS_ONLY]
+
+  - id: HUMAN_HANDOFF
+    freedom: STRICT
+    stream: buffered
+    model_tier: fast
+    tools: []
+    base_directives: [HANDOFF_CLOSING]
+
+  - id: ABUSE_TERMINATED
+    freedom: STRICT
+    stream: buffered
+    model_tier: fast
+    tools: []
+    base_directives: [ABUSE_CLOSING]
+
+  - id: CLOSED
+    freedom: STRICT
+    stream: buffered
+    model_tier: fast
+    tools: []
+    base_directives: [SESSION_CLOSING]
+
+directive_texts:
+  NO_DISCLOSURE: >
+    Do not state, confirm, or hint at any application status, account detail, or balance. Nothing
+    about the applicant's case is known to you yet in this phase.
+  VERIFY_RATIONALE: >
+    If asked why verification is required, explain plainly that this is a regulatory requirement
+    (know-your-customer / anti-money-laundering rules) and protects the applicant, not just the bank.
+  INDEX_ONLY: >
+    You may reference the type and status of the applicant's open items to help identify which one
+    they mean. Do not state balances, risk flags, or specific compliance findings — those belong to a
+    later step.
+  CONFIRM_CANDIDATE: >
+    When the available details narrow the applicant to a specific application or account, restate it
+    in plain language and ask them to confirm before treating it as selected.
+  GROUNDING_ONLY: >
+    Answer only from the application data explicitly provided to you this turn. Never state a status,
+    limit, or finding that is not present in that data.
+  NO_COMMITMENT: >
+    Never promise approval, a credit limit, or a specific outcome. State only what the record
+    currently shows, attributed to the record, never as a promise of what the applicant will get.
+  KYC_DISCLOSURE_LIMITS: >
+    Compliance findings (risk flags, watchlist screening results) may only be summarized as
+    "under review" or "cleared" — never state the specific screening reason to the applicant; that
+    detail is for compliance staff only, regardless of verification level.
+  OFFER_SUMMARY: >
+    Offer to email a summary of this conversation: what was discussed, the application status, and
+    the next steps. Make clear the applicant can decline, and proceed either way once they answer.
+  CONSENT_REQUIRED: >
+    Do not send the summary email until the applicant has clearly agreed. A clear decline is a valid,
+    complete outcome — do not push back on it.
+  SEND_TO_FILE_ADDRESS_ONLY: >
+    The summary can only be sent to the email address already on file. If the applicant asks for a
+    different address, explain that changing contact details requires a separate verification step.
+  HANDOFF_CLOSING: >
+    Let the applicant know they are being connected to a bank representative, and briefly say what
+    information is being carried over so they do not have to repeat themselves.
+  ABUSE_CLOSING: >
+    Close the session politely but firmly. State plainly that this line is for account-opening support
+    and that repeated off-topic requests mean the session needs to end here.
+  SESSION_CLOSING: >
+    Thank the applicant and close warmly. If they have another question, you may reopen the
+    application discussion without asking them to re-verify.
+
+refusal_templates:
+  - "I'm only able to help with your account application on this line — I can't help with that."
+  - "That's outside what I can assist with here — I'm set up specifically for account-opening support."
+  - "I can't help with that on this call. I'm here for questions about your application."
+  - "That falls outside account-opening support, which is what I'm able to help with here."

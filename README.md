@@ -137,5 +137,9 @@ Stated plainly in [DESIGN.md §11](DESIGN.md#11-known-limitations); most relevan
   documented rather than hidden.
 - The eval suite is scripted, not adversarially LLM-simulated (EVAL.md §5) — the natural next step,
   not built in this timeframe.
-- `bank_kyc.yaml`, a second SOP proving the engine is vertical-agnostic (DESIGN.md §9.2, P2), was not
-  built in this pass; the spec format and loader already support it without code changes.
+- `bank_kyc.yaml` (selectable in the UI) proves the *control layer* — phases, gates, freedom levels, tool
+  permissions, escalation, directives — is vertical-agnostic, checked by `tests/test_bank_kyc_spec.py`.
+  It does not yet prove the full runtime is pluggable: case resolution past identity verification still
+  reads insurance fixture data, because no bank domain-adapter exists (DESIGN.md §9.2's honestly-scoped
+  note). The UI says this plainly when the SOP is selected, rather than letting it look like more than
+  it is.

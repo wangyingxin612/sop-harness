@@ -117,6 +117,16 @@ export default function App() {
         </div>
       )}
 
+      {sopName === "bank_kyc" && (
+        <div style={{ background: "var(--warn-soft)", color: "var(--warn)", padding: "8px 20px", fontSize: 12.5 }}>
+          This SOP's phase/gate/directive config is real and independently loaded (see
+          backend/sops/bank_kyc.yaml) — identity verification runs exactly as configured. Case resolution
+          past that point still reads the insurance fixture data, since no bank domain adapter exists yet
+          (see DESIGN.md §9.2). This option demonstrates that the control layer is vertical-agnostic, not
+          a complete second product.
+        </div>
+      )}
+
       <div className="main-layout">
         <Chat
           messages={messages}
