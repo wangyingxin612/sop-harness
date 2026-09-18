@@ -13,3 +13,5 @@ build/
 runs/
 *.jsonl
 .DS_Store
+backend/*.egg-info/
+backend/evals/reports/latest.json
