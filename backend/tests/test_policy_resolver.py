@@ -278,3 +278,57 @@ def test_resolve_is_a_pure_function_of_state(domain, spec):
     plan_a = resolve(state, domain, spec)
     plan_b = resolve(state, domain, spec)
     assert plan_a == plan_b
+
+
+class TestPostProcessCloseOut:
+    """Found by testing the deployed demo, not by the eval suite: no scenario
+    had a turn AFTER the email decision, so nothing covered what the agent
+    should say once the summary question is settled. It was still being told
+    to OFFER the summary — i.e. to ask a question it had already answered."""
+
+    def _post_process_state(self, domain, spec, *, sent=False, skipped=False):
+        state = make_state(phase=Phase.POST_PROCESS)
+        state.facts.verified_party_id = "P9"
+        state.memory.confirmed_case_id = "CL-2048"
+        state.facts.email_sent = sent
+        state.facts.email_skipped = skipped
+        return state
+
+    def test_summary_is_not_offered_again_after_it_was_sent(self, domain, spec):
+        state = self._post_process_state(domain, spec, sent=True)
+        state, plan = decide(state, signals(), domain, spec)
+        ids = [d.id for d in plan.directives]
+        assert "OFFER_SUMMARY" not in ids
+        assert "CONSENT_REQUIRED" not in ids
+        assert "CLOSE_OUT" in ids
+
+    def test_summary_is_not_offered_again_after_it_was_declined(self, domain, spec):
+        state = self._post_process_state(domain, spec, skipped=True)
+        state, plan = decide(state, signals(), domain, spec)
+        ids = [d.id for d in plan.directives]
+        assert "OFFER_SUMMARY" not in ids
+        assert "CLOSE_OUT" in ids
+
+    def test_summary_is_still_offered_before_any_decision(self, domain, spec):
+        state = self._post_process_state(domain, spec)
+        state, plan = decide(state, signals(), domain, spec)
+        ids = [d.id for d in plan.directives]
+        assert "OFFER_SUMMARY" in ids
+
+    def test_send_now_directive_also_asks_about_further_needs(self, domain, spec):
+        """The deployed demo ended on 'I'll get that sent over' and then just
+        stopped — the caller was left with no prompt and the phase stranded
+        in POST_PROCESS."""
+        state = self._post_process_state(domain, spec)
+        state.memory.consent_events.append(
+            {"action_type": "send_summary_email", "decision": "approved",
+             "turn_index": state.next_turn_index() - 1, "quote": "yes please"}
+        )
+        state, plan = decide(state, signals(), domain, spec)
+        send_now = next(d for d in plan.directives if d.id == "SEND_NOW")
+        assert "anything else" in send_now.text.lower()
+
+    def test_conversation_can_actually_reach_closed(self, domain, spec):
+        state = self._post_process_state(domain, spec, sent=True)
+        state, plan = decide(state, signals(wrap_up_request=True, raw_message="no that's all, thanks"), domain, spec)
+        assert plan.phase == Phase.CLOSED

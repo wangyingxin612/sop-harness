@@ -7,10 +7,23 @@ app = 'sop-harness-demo'
 primary_region = 'sjc'
 
 [build]
+
+# ONE machine, deliberately. Sessions live on the machine's own filesystem
+# (backend/app/session/persistence.py), so two machines behind Fly's proxy
+# would each hold half the conversations and 404 the other half — which is
+# exactly the production failure that motivated adding persistence at all:
+#
+#   POST /api/sessions/3bf2007d/messages -> 404   (session was on the other machine)
+#
+# Horizontal scaling needs shared state (a Fly volume, Redis, or Postgres)
+# and is out of scope for a demo; capping at one machine is the honest fix
+# rather than one that looks scalable and silently drops conversations.
+# Enforce with:  flyctl scale count 1
+
 [http_service]
   internal_port = 8000
   force_https = true
-  auto_stop_machines = 'stop'
+  auto_stop_machines = 'stop'   # safe now: state is on disk and rehydrates on the next request
   auto_start_machines = true
   min_machines_running = 0
 

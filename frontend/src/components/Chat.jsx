@@ -6,13 +6,30 @@ const SUGGESTIONS = [
   "I'm David Chen, calling about my mom Margaret Chen's claim.",
 ];
 
-export default function Chat({ messages, streamingText, onSend, disabled, sessionReady }) {
+const TERMINAL_COPY = {
+  CLOSED: "This conversation is complete.",
+  HUMAN_HANDOFF: "Handed off to a human representative — see the packet in the inspector.",
+  ABUSE_TERMINATED: "This session was closed after repeated off-topic requests.",
+};
+
+export default function Chat({
+  messages,
+  streamingText,
+  onSend,
+  onRetry,
+  disabled,
+  sessionReady,
+  turnError,
+  idleNudge,
+  terminal,
+  phase,
+}) {
   const [input, setInput] = useState("");
   const scrollRef = useRef(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, streamingText]);
+  }, [messages, streamingText, turnError, idleNudge]);
 
   function submit(e) {
     e?.preventDefault();
@@ -42,7 +59,30 @@ export default function Chat({ messages, streamingText, onSend, disabled, sessio
             <div className="bubble streaming">{streamingText}</div>
           </div>
         )}
+
+        {/* A failed turn keeps the caller's message on screen and offers one
+            click to resend it. The alternative — a dead UI — costs them the
+            whole conversation, which is the single worst outcome here. */}
+        {turnError && (
+          <div className="turn-error">
+            <div className="turn-error-msg">{turnError.message}</div>
+            {turnError.retryable && (
+              <button className="btn btn-primary btn-sm" onClick={onRetry} disabled={disabled}>
+                Retry that message
+              </button>
+            )}
+          </div>
+        )}
+
+        {idleNudge && !turnError && !terminal && (
+          <div className="msg-row agent">
+            <div className="bubble idle-nudge">
+              Still there? I'll keep your place — just type whenever you're ready.
+            </div>
+          </div>
+        )}
       </div>
+
       {messages.length === 0 && sessionReady && (
         <div className="chat-hint">
           Try:
@@ -53,18 +93,23 @@ export default function Chat({ messages, streamingText, onSend, disabled, sessio
           ))}
         </div>
       )}
-      <form className="chat-input-row" onSubmit={submit}>
-        <input
-          type="text"
-          placeholder={sessionReady ? "Type a message…" : "Create a session first"}
-          value={input}
-          disabled={!sessionReady || disabled}
-          onChange={(e) => setInput(e.target.value)}
-        />
-        <button type="submit" className="btn btn-primary" disabled={!sessionReady || disabled}>
-          Send
-        </button>
-      </form>
+
+      {terminal ? (
+        <div className="chat-terminal">{TERMINAL_COPY[phase] || "This conversation has ended."}</div>
+      ) : (
+        <form className="chat-input-row" onSubmit={submit}>
+          <input
+            type="text"
+            placeholder={sessionReady ? "Type a message…" : "Create a session first"}
+            value={input}
+            disabled={!sessionReady || disabled}
+            onChange={(e) => setInput(e.target.value)}
+          />
+          <button type="submit" className="btn btn-primary" disabled={!sessionReady || disabled}>
+            {disabled ? "…" : "Send"}
+          </button>
+        </form>
+      )}
     </div>
   );
 }

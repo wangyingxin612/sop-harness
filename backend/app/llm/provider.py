@@ -8,6 +8,8 @@ without touching call sites, because everything above this module talks to
 """
 from __future__ import annotations
 
+import random
+import time
 from dataclasses import dataclass, field
 
 import anthropic
@@ -70,8 +72,6 @@ class LLMProvider:
         tool_choice: dict | None = None,
         max_tokens: int = 1024,
     ) -> LLMResult:
-        import time
-
         model = self.model_for(tier)
         kwargs: dict = dict(model=model, max_tokens=max_tokens, system=system, messages=messages)
         if tools:
@@ -80,7 +80,7 @@ class LLMProvider:
             kwargs["tool_choice"] = tool_choice
 
         start = time.monotonic()
-        resp = self.client.messages.create(**kwargs)
+        resp = self._call_with_retry(kwargs)
         latency_ms = (time.monotonic() - start) * 1000
 
         text = "".join(b.text for b in resp.content if b.type == "text")
@@ -100,6 +100,34 @@ class LLMProvider:
             stop_reason=resp.stop_reason,
             latency_ms=latency_ms,
         )
+
+    # Transient upstream failures (rate limits, 5xx, connection resets) are
+    # the single most likely reason a live conversation breaks, and they are
+    # also the most recoverable. Retrying here means the caller usually never
+    # learns anything happened; only an exhausted retry budget becomes a
+    # user-visible error (which app/api/main.py then reports as retryable,
+    # with the caller's message preserved).
+    _RETRYABLE = (
+        anthropic.RateLimitError,
+        anthropic.APIConnectionError,
+        anthropic.InternalServerError,
+        anthropic.APITimeoutError,
+    )
+
+    def _call_with_retry(self, kwargs: dict, attempts: int = 3):
+        last_exc: Exception | None = None
+        for attempt in range(attempts):
+            try:
+                return self.client.messages.create(**kwargs)
+            except self._RETRYABLE as exc:
+                last_exc = exc
+                if attempt == attempts - 1:
+                    break
+                # Exponential backoff with jitter — without jitter, several
+                # concurrent sessions hitting a rate limit retry in lockstep
+                # and hit it again together.
+                time.sleep((2 ** attempt) * 0.75 + random.uniform(0, 0.4))
+        raise last_exc  # type: ignore[misc]
 
     def structured_call(
         self,

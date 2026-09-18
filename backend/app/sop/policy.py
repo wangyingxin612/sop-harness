@@ -71,7 +71,18 @@ CONSENT_REMINDER = Directive(
 )
 SEND_NOW = Directive(
     id="SEND_NOW",
-    text="The caller just agreed to receive the summary — call send_summary_email now, to the address on file.",
+    text=(
+        "The caller just agreed to receive the summary — call send_summary_email now, to the address "
+        "on file. Then confirm in one sentence that it's on its way, and ask whether there's anything "
+        "else they need. Do NOT sign off yet: the call isn't over until they say they're done."
+    ),
+)
+CLOSE_OUT = Directive(
+    id="CLOSE_OUT",
+    text=(
+        "The summary has been handled and the caller has nothing further. Close the call warmly in one "
+        "or two sentences."
+    ),
 )
 ACKNOWLEDGE_DECLINE = Directive(
     id="ACKNOWLEDGE_DECLINE",
@@ -329,11 +340,22 @@ def resolve(state: SessionState, domain: DomainContext, spec: SopSpec) -> TurnPl
             "decision"
         ) == "declined" and memory.consent_events[-1].get("turn_index") == state.next_turn_index() - 1
 
+        email_decided = facts.email_sent or facts.email_skipped
+        if email_decided:
+            # The summary question is settled — drop the directives that ask
+            # it. Leaving them in made the agent offer the summary a SECOND
+            # time after already sending it (found by testing the
+            # deployed demo, not by the eval suite: no scenario had a turn
+            # AFTER the email decision).
+            directives = [d for d in directives if d.id not in ("OFFER_SUMMARY", "CONSENT_REQUIRED")]
+
         if just_approved:
             directives.append(SEND_NOW)
         elif just_declined:
             directives.append(ACKNOWLEDGE_DECLINE)
-        elif facts.pending_action is None and not facts.email_sent and not facts.email_skipped:
+        elif email_decided:
+            directives.append(CLOSE_OUT)
+        elif facts.pending_action is None:
             directives.append(CONSENT_REMINDER)
 
     return TurnPlan(

@@ -77,6 +77,44 @@ def _provider_for(session_id: str) -> LLMProvider:
     return LLMProvider(_SETTINGS)
 
 
+def _classify_error(exc: Exception) -> dict:
+    """Turn an exception into something the UI can act on. Every branch
+    answers two questions for the user: what happened, and what can they do
+    about it."""
+    import anthropic
+
+    if isinstance(exc, anthropic.AuthenticationError):
+        return {
+            "kind": "auth",
+            "retryable": False,
+            "message": "The API key was rejected. Enter a valid key with “Use my own API key”, "
+                       "or set ANTHROPIC_API_KEY on the server.",
+        }
+    if isinstance(exc, anthropic.RateLimitError):
+        return {
+            "kind": "rate_limit",
+            "retryable": True,
+            "message": "The model is rate-limited right now. Your message is still here — retry in a moment.",
+        }
+    if isinstance(exc, (anthropic.APIConnectionError, anthropic.APITimeoutError)):
+        return {
+            "kind": "network",
+            "retryable": True,
+            "message": "Couldn’t reach the model. Your message is still here — retry when you’re ready.",
+        }
+    if isinstance(exc, anthropic.APIStatusError):
+        return {
+            "kind": "upstream",
+            "retryable": True,
+            "message": f"The model service returned an error ({exc.status_code}). Your message is still here.",
+        }
+    return {
+        "kind": "internal",
+        "retryable": True,
+        "message": "Something went wrong handling that turn. Your message and everything before it are intact.",
+    }
+
+
 class CreateSessionRequest(BaseModel):
     sop_name: str = "insurance_claims"
     consent_scenario: str = "default"
@@ -136,7 +174,9 @@ def post_message(session_id: str, req: MessageRequest):
     which is the property that actually matters."""
     state = STORE.get(session_id)
     if state is None:
-        raise HTTPException(404, "session not found")
+        # After a redeploy the on-disk state is gone too (new machine, new
+        # filesystem). Say so precisely rather than leaving a dead UI.
+        raise HTTPException(404, "session_not_found")
 
     spec = _get_spec(state.sop_name)
     domain = _get_domain()
@@ -146,7 +186,13 @@ def post_message(session_id: str, req: MessageRequest):
         try:
             result = run_turn(state, req.message, domain, spec, provider, CONSENT_PATH)
         except Exception as exc:  # noqa: BLE001
-            yield f"event: error\ndata: {json.dumps({'message': str(exc)})}\n\n"
+            # A failed turn must never cost the caller their conversation.
+            # The error is classified so the UI can say something actionable
+            # and, crucially, so it knows whether offering "Retry" is honest:
+            # the session state was not mutated (run_turn works on a copy and
+            # only the store.update below commits it), so retrying the same
+            # message is safe and idempotent.
+            yield f"event: error\ndata: {json.dumps(_classify_error(exc))}\n\n"
             return
 
         STORE.update(result.state)
