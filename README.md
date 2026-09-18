@@ -39,24 +39,31 @@ one per-session. Either path works standalone.
 
 ## Quickstart (no Docker)
 
-Requires Python 3.11+ and Node 18+.
+Requires Python 3.11+ and Node 18+. **All `make` targets run from the repo root** (where the
+`Makefile` is) — each one `cd`s into the right subdirectory itself.
 
 ```bash
-cd backend
+# one-time setup
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
-cp ../.env.example ../.env   # then edit in your ANTHROPIC_API_KEY
-
-cd ../frontend
-npm install && npm run build   # builds into frontend/dist, served by the backend
-
-cd ../backend
-uvicorn app.api.main:app --reload
+pip install -e "backend[dev]"
+cp .env.example .env          # then edit in your ANTHROPIC_API_KEY
+cd frontend && npm install && cd ..
 ```
 
-Open **http://localhost:8000**. For frontend hot-reload during development, run `npm run dev` in
-`frontend/` instead (proxies `/api` to `localhost:8000` — see `frontend/vite.config.js`) and open
-**http://localhost:5173**.
+Then, in **two terminals**, both from the repo root:
+
+```bash
+make dev-backend      # FastAPI on :8000  (uvicorn --reload)
+make dev-frontend     # Vite on :5173     (hot reload, proxies /api -> :8000)
+```
+
+Open **http://localhost:5173** — not 8000. During development the UI is served by Vite; the backend
+on 8000 only answers `/api`.
+
+Single-port alternative, no Vite: `make frontend-build` once, then `make dev-backend`, and open
+**http://localhost:8000**. FastAPI serves the built files from `frontend/dist`. This is exactly how
+the Docker image runs, so it is the right way to sanity-check a build before deploying — but you have
+to re-run `make frontend-build` after every frontend change.
 
 ## Trying it
 
@@ -77,16 +84,16 @@ graceful-degradation behavior (DESIGN.md §7.10).
 
 ## Running the tests
 
-```bash
-cd backend && source .venv/bin/activate   # or ../.venv if using the repo-root venv layout below
-pytest -q                                  # 134 tests, 0 model calls, ~1.5s
-```
+All from the repo root:
 
 ```bash
-python -m evals.runner                    # 12 scenarios against the real API, ~$0.47, ~4 min
-python -m evals.runner --id margaret_chen_happy_path   # a single scenario
-python -m evals.runner --tag adversarial               # by tag
+make test                      # 234 tests, 0 model calls, ~3s
+make eval                      # 12 scenarios against the real API, ~$0.51, ~4 min
+make eval-one ID=margaret_chen_happy_path
 ```
+
+The eval run writes `backend/evals/reports/latest.json` and is rendered as a readable page at
+**/api/evals/report** (also linked from the Operations tab).
 
 See [EVAL.md](EVAL.md) for what each layer checks and the current baseline results
 (`backend/evals/reports/baseline.json`).
@@ -100,31 +107,52 @@ flyctl secrets set ANTHROPIC_API_KEY=sk-ant-...
 flyctl deploy
 ```
 
-`fly.toml` scales to zero machines when idle, so an unused deployment costs nothing between demos.
+### Redeploying
 
-> **Note on this submission's hosted URL**: this environment has no Fly.io account credentials available
-> to create/authenticate one on your behalf — that's a decision only you can make (which account, which
-> region, what the app name should be). The Dockerfile, `fly.toml`, and the three commands above are
-> ready; deploying is the one remaining step. The Docker image itself has been built and run end-to-end
-> in this environment as verification (see PROGRESS.md).
+Nothing needs stopping first. `flyctl deploy` builds the new image and replaces the machine in place;
+`flyctl status` will show it come back up. `fly.toml` scales to zero when idle, so a `stopped` machine
+is the cost-saving working as intended — the first request wakes it (one cold start of a few seconds).
+
+**Sessions do not survive a deploy.** There is no Fly volume attached, so `backend/runs/` lives on the
+machine's ephemeral filesystem: it survives the scale-to-zero stop/start cycle (which is what
+`app/session/persistence.py` was added for), but a deploy replaces the filesystem and the Operations
+board starts empty. That is fine for a demo and deliberate — a volume pins the app to one machine in
+one region, which is a real constraint to take on knowingly rather than by accident. To keep history
+across deploys:
+
+```bash
+flyctl volumes create sop_data --size 1 --region sjc
+```
+
+```toml
+# then add to fly.toml
+[mounts]
+  source = "sop_data"
+  destination = "/app/backend/runs"
+```
+
+**Hosted at https://sop-harness-demo.fly.dev** (one machine in `sjc`, scale-to-zero — the first
+request after an idle period takes a few seconds to wake).
 
 ## Project structure
 
 ```
 backend/app/
-  sop/        state machine, identity matcher's caller, spec loader, policy resolver, domain data
+  sop/        state machine, spec loader, policy resolver, domain data, disposition codes
   identity/   deterministic ≥3-factor matcher, alias/normalization, representative lookup
   llm/        Anthropic provider wrapper, PERCEIVE (extraction), ACT (generation), prompt assembly
   guards/     the output guard — disclosure / grounding / commitment / contract checks
   tools/      tool schemas + side-effect handlers (transfer, consent, follow-up, email)
   session/    the PERCEIVE→DECIDE→ACT→VERIFY orchestrator, session store
   api/        FastAPI app
-  obs/        HTML transcript export
+  obs/        HTML transcript export, idle-policy metrics
 backend/sops/       insurance_claims.yaml — the SOP spec (DESIGN.md §6)
+                    bank_kyc.yaml — a second vertical, to keep §6's claim falsifiable
 backend/fixtures/   the provided starter data
-backend/tests/      134 pytest tests, no model calls
-backend/evals/      scenario harness against the real API — scenarios, invariants, runner, report
-frontend/           React chat + Inspector UI (Vite)
+backend/tests/      234 pytest tests, no model calls
+backend/evals/      scenario harness against the real API — scenarios, invariants, runner,
+                    JSON + HTML reports, ASR-noise suite, model-routing cost experiment
+frontend/           React chat + Inspector + Operations board (Vite)
 DESIGN.md   EVAL.md   PROGRESS.md
 ```
 
