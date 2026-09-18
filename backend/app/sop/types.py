@@ -150,6 +150,10 @@ class SessionFacts:
     caller_role: CallerRole = CallerRole.UNKNOWN
     verified_party_id: Optional[str] = None
     candidate_party_ids: list[str] = field(default_factory=list)  # ambiguous-candidate tracking
+    # True when a name matched by sound rather than exactly. Surfaced rather
+    # than hidden so the inspector and the audit trail never overstate how
+    # identity was established (app/identity/phonetic.py).
+    phonetic_match_used: bool = False
 
     # representative / consent (DESIGN.md §7.10)
     representative_of_party_id: Optional[str] = None

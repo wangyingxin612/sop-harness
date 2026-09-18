@@ -29,6 +29,14 @@ export default function App() {
   const pendingMessage = useRef(null);   // the message a retry would resend
   const idleTimer = useRef(null);
 
+  // Dark by default — this is an operations instrument, not a consumer chat
+  // app — but the preference is remembered and respected.
+  const [theme, setTheme] = useState(() => localStorage.getItem("sop-theme") || "dark");
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    try { localStorage.setItem("sop-theme", theme); } catch { /* private mode */ }
+  }, [theme]);
+
   useEffect(() => {
     listSops()
       .then(setSops)
@@ -140,9 +148,12 @@ export default function App() {
   return (
     <>
       <header className="app-header">
-        <div className="app-title">
-          SOP Harness
-          <small>Insurance Claims Support — demo</small>
+        <div className="brand">
+          <span className="brand-mark">SOP</span>
+          <span className="brand-text">
+            <strong>SOP Harness</strong>
+            <span>Insurance claims · enforced procedure</span>
+          </span>
         </div>
 
         <div className="field-group">
@@ -155,14 +166,14 @@ export default function App() {
         </div>
 
         <div className="field-group">
-          <label>Consent scenario</label>
+          <label>Consent</label>
           <select
             value={consentScenario}
             onChange={(e) => setConsentScenario(e.target.value)}
             disabled={!!sessionId}
           >
-            <option value="default">default (approves)</option>
-            <option value="timeout">timeout (never approves)</option>
+            <option value="default">approves</option>
+            <option value="timeout">never approves</option>
           </select>
         </div>
 
@@ -178,7 +189,7 @@ export default function App() {
             />
           </div>
         ) : (
-          <button className="btn" onClick={() => setShowKeyField(true)}>Use my own API key</button>
+          <button className="btn" onClick={() => setShowKeyField(true)} title="Use your own Anthropic API key for this session">Own key</button>
         )}
 
         <div className="spacer" />
@@ -186,9 +197,16 @@ export default function App() {
         {sessionId && <span className="session-tag">session {sessionId}</span>}
         {sessionId && (
           <a className="btn" href={exportUrl(sessionId)} target="_blank" rel="noreferrer">
-            Export transcript
+            Export
           </a>
         )}
+        <button
+          className="btn btn-icon"
+          onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+          title={theme === "dark" ? "Switch to light" : "Switch to dark"}
+        >
+          {theme === "dark" ? "☾" : "☀"}
+        </button>
         <button className="btn btn-primary" onClick={handleNewSession}>
           {sessionId ? "New session" : "Start session"}
         </button>

@@ -39,6 +39,7 @@ def serialize_state(state: SessionState) -> dict:
             "matched_factor_count": facts.matched_factor_count,
             "matched_factor_types": facts.matched_factor_types,
             "mismatch_count": facts.mismatch_count,
+            "phonetic_match_used": facts.phonetic_match_used,
             "caller_role": facts.caller_role.value,
             "verified_party_id": facts.verified_party_id,
             "representative_of_party_id": facts.representative_of_party_id,

@@ -1,274 +1,402 @@
 import { Fragment } from "react";
 
-const PHASE_ORDER = ["VERIFY_ID", "RESOLVE_INTENT", "PROCESS_CASE", "POST_PROCESS", "CLOSED"];
-const TERMINAL = ["HUMAN_HANDOFF", "ABUSE_TERMINATED"];
+/* The inspector's job is to make one claim visible: the SOP is being
+   enforced, right now, by something other than the model's good intentions.
+   Every element below is here because it supports that claim or because an
+   operator needs it to act. Internal identifiers and developer detail are
+   deliberately not in the default view — they served me while building and
+   nobody else since. */
 
-function PhaseStepper({ phase }) {
-  const isTerminal = TERMINAL.includes(phase);
-  const currentIdx = PHASE_ORDER.indexOf(phase);
+const PHASES = [
+  { id: "VERIFY_ID", label: "Verify identity", gate: "≥3 identity factors" },
+  { id: "RESOLVE_INTENT", label: "Resolve intent", gate: "caller confirms the claim" },
+  { id: "PROCESS_CASE", label: "Process case", gate: null },
+  { id: "POST_PROCESS", label: "Wrap up", gate: "explicit consent to email" },
+  { id: "CLOSED", label: "Closed", gate: null },
+];
+const TERMINALS = {
+  HUMAN_HANDOFF: "Handed to a human",
+  ABUSE_TERMINATED: "Session ended",
+};
+
+const DIRECTIVE_LABELS = {
+  ACKNOWLEDGE_EMOTION: "Acknowledge how they feel first",
+  OFFER_ALTERNATIVE_FACTORS: "Offer a different ID factor",
+  STATE_FACTORS_REMAINING: "Say how many factors remain",
+  DISAMBIGUATION_HELP: "Ask which claim they mean",
+  NO_CANDIDATES_HELP: "Nothing matches — ask them to rephrase",
+  CONSENT_REMINDER: "Still need a send/skip decision",
+  SEND_NOW: "Send the summary now",
+  ACKNOWLEDGE_DECLINE: "Accept the decline without pushback",
+  CLOSE_OUT: "Close the call warmly",
+  REPRESENTATIVE_SCOPE_NOTE: "Representative — reduced disclosure",
+  REFUSAL_TEMPLATE: "Use the exact refusal wording",
+  VERIFY_RATIONALE: "Explain why verification protects them",
+  NO_DISCLOSURE: "Disclose nothing about the case",
+  INDEX_ONLY: "Claim type/status/date only",
+  CONFIRM_CANDIDATE: "Restate the claim and confirm",
+  GROUNDING_ONLY: "Answer only from provided data",
+  NO_COMMITMENT: "Never promise an outcome",
+  ALTERNATIVE_LADDER_FIRST: "Offer alternatives before a transfer",
+  OFFER_SUMMARY: "Offer the summary email",
+  CONSENT_REQUIRED: "Don't send without clear agreement",
+  SEND_TO_FILE_ADDRESS_ONLY: "Only the address on file",
+  HANDOFF_CLOSING: "Explain what's being carried over",
+  ABUSE_CLOSING: "Close firmly and politely",
+  SESSION_CLOSING: "Close warmly",
+};
+
+function PhaseRail({ phase, facts }) {
+  const terminal = TERMINALS[phase];
+  const idx = PHASES.findIndex((p) => p.id === phase);
+
   return (
-    <div className="phase-stepper">
-      {PHASE_ORDER.map((p, i) => {
-        let cls = "phase-pill";
-        if (!isTerminal) {
-          if (p === phase) cls += " active";
-          else if (i < currentIdx) cls += " done";
-        }
+    <div className="rail">
+      {PHASES.map((p, i) => {
+        const done = !terminal && i < idx;
+        const current = !terminal && i === idx;
+        const locked = !terminal && i > idx;
+        const cls = ["rail-step", done && "is-done", current && "is-current", locked && "is-locked"]
+          .filter(Boolean)
+          .join(" ");
         return (
-          <span key={p} className={cls}>
-            {p.replace("_", " ")}
-          </span>
+          <div key={p.id} className={cls}>
+            <span className="rail-dot">{done ? "✓" : locked ? "🔒" : i + 1}</span>
+            <span className="rail-label">{p.label}</span>
+            {current && <span className="rail-state open">current</span>}
+            {locked && p.gate && <span className="rail-state locked">gated</span>}
+          </div>
         );
       })}
-      {isTerminal && <span className="phase-pill terminal active">{phase.replace("_", " ")}</span>}
+      {terminal && (
+        <div className="rail-step is-current is-stopped">
+          <span className="rail-dot">!</span>
+          <span className="rail-label">{terminal}</span>
+          <span className="rail-state stopped">{facts.escalation_reason?.replace(/_/g, " ")}</span>
+        </div>
+      )}
     </div>
   );
 }
 
-function IdentityMeter({ facts }) {
-  const pct = Math.min(100, (facts.matched_factor_count / 3) * 100);
-  const allFactors = ["full_name", "dob", "phone", "email", "id_last4"];
-  return (
-    <div>
-      <div className="meter-row">
-        <span>Identity factors</span>
-        <div className="meter-track">
-          <div className={`meter-fill ${facts.matched_factor_count >= 3 ? "good" : ""}`} style={{ width: `${pct}%` }} />
-        </div>
-        <span>{facts.matched_factor_count}/3</span>
+function GateNote({ phase, facts }) {
+  if (TERMINALS[phase]) return null;
+  if (phase === "VERIFY_ID") {
+    const left = Math.max(0, 3 - facts.matched_factor_count);
+    return (
+      <div className="gate-note">
+        No claim data has been fetched. {left > 0 ? `${left} more identity factor${left > 1 ? "s" : ""} needed.` : "Gate clearing…"}
       </div>
-      <div className="factor-chip-row">
-        {allFactors.map((f) => (
-          <span key={f} className={`factor-chip ${facts.matched_factor_types.includes(f) ? "matched" : ""}`}>
-            {f}
-          </span>
+    );
+  }
+  if (phase === "RESOLVE_INTENT") {
+    return <div className="gate-note">Claim list visible — type, status and date only. No amounts or reasons.</div>;
+  }
+  if (facts.caller_role === "representative" && facts.consent_status !== "approved") {
+    return <div className="gate-note">Representative without consent — narrative and amounts withheld.</div>;
+  }
+  return <div className="gate-note open">Full detail for the confirmed claim is available.</div>;
+}
+
+function IdentityCard({ facts, phoneticUsed }) {
+  return (
+    <section className="card">
+      <h3 className="card-title">
+        Identity gate
+        <span className={`rail-state ${facts.matched_factor_count >= 3 ? "open" : "locked"}`}>
+          {facts.matched_factor_count}/3
+        </span>
+      </h3>
+
+      <div className="segbar">
+        {[0, 1, 2].map((i) => (
+          <span key={i} className={`seg ${i < facts.matched_factor_count ? "filled" : ""}`} />
         ))}
       </div>
+
+      <div className="factor-chips">
+        {["full_name", "dob", "phone", "email", "id_last4"].map((f) => {
+          const matched = facts.matched_factor_types.includes(f);
+          const isPhonetic = matched && f === "full_name" && phoneticUsed;
+          return (
+            <span key={f} className={`chip ${matched ? (isPhonetic ? "phonetic" : "matched") : ""}`}>
+              {f.replace("_", " ")}
+              {isPhonetic ? " ~" : ""}
+            </span>
+          );
+        })}
+      </div>
+
+      {phoneticUsed && (
+        <div className="gate-note" style={{ marginTop: 10 }}>
+          Name matched by sound, not exactly — recorded in the audit trail.
+        </div>
+      )}
       {facts.mismatch_count > 0 && (
-        <div style={{ marginTop: 6 }}>
-          <span className="badge badge-bad">{facts.mismatch_count} mismatch{facts.mismatch_count > 1 ? "es" : ""}</span>
+        <div className="gate-note stopped" style={{ marginTop: 10 }}>
+          {facts.mismatch_count} detail{facts.mismatch_count > 1 ? "s" : ""} didn't match. Two locks the session.
         </div>
       )}
-    </div>
+
+      {(facts.caller_role !== "unknown" || facts.verified_party_id) && (
+        <dl className="kv" style={{ marginTop: 12 }}>
+          <dt>Caller</dt>
+          <dd>{facts.caller_role === "representative" ? "Authorised representative" : "Policyholder"}</dd>
+          {facts.caller_role === "representative" && (
+            <>
+              <dt>Consent</dt>
+              <dd className={facts.consent_status === "approved" ? "" : "mono"}>
+                {facts.consent_status.replace(/_/g, " ")}
+                {facts.consent_poll_count > 0 && ` · checked ${facts.consent_poll_count}×`}
+              </dd>
+            </>
+          )}
+        </dl>
+      )}
+    </section>
   );
 }
 
-function SlotItem({ label, slot }) {
-  if (!slot) return null;
-  return (
-    <div className="slot-item">
-      <div className="slot-label">{label}{slot.superseded ? " (corrected)" : ""}</div>
-      <div className="slot-value">{String(slot.value)}</div>
-      <div className="slot-quote">“{slot.verbatim_quote}”</div>
-    </div>
-  );
+function groupBySource(slots) {
+  const byQuote = new Map();
+  for (const [key, slot] of slots) {
+    const q = slot.verbatim_quote || "";
+    if (!byQuote.has(q)) byQuote.set(q, []);
+    byQuote.get(q).push([key, slot]);
+  }
+  return [...byQuote.entries()];
 }
 
-function LastTurnDetail({ trace }) {
-  if (!trace) return <div className="empty-hint">No turns yet.</div>;
-  const lastGuard = trace.guard_attempts?.[trace.guard_attempts.length - 1];
+function dedupeHints(hints) {
+  const byText = new Map();
+  for (const h of hints) {
+    const text = [h.case_type, h.status, h.time_ref].filter(Boolean).join(" · ") || "—";
+    if (!byText.has(text)) byText.set(text, { text, turns: [] });
+    byText.get(text).turns.push(h.turn_index);
+  }
+  return [...byText.values()];
+}
+
+function EvidenceCard({ memory }) {
+  const slots = Object.entries(memory.identity_slots);
+  const nothing =
+    slots.length === 0 && memory.case_hints.length === 0 && !memory.resolved_intent && !memory.confirmed_case_id;
+
   return (
-    <div>
-      <dl className="kv" style={{ marginBottom: 10 }}>
-        <dt>Route</dt>
-        <dd>{trace.plan.route}</dd>
-        <dt>Model tier</dt>
-        <dd>{trace.plan.model_tier}</dd>
-        <dt>Phase</dt>
-        <dd>{trace.phase_before} → {trace.phase_after}</dd>
-      </dl>
+    <section className="card">
+      <h3 className="card-title">What it remembers · with sources</h3>
+      {nothing && <p className="muted">Nothing recorded yet.</p>}
 
-      {trace.plan.directives?.length > 0 && (
-        <div style={{ marginBottom: 8 }}>
-          {trace.plan.directives.map((d) => (
-            <span key={d} className="badge badge-neutral">{d}</span>
+      {/* Slots extracted from the SAME utterance share one citation. Printing
+          the caller's sentence once per field turned a three-field turn into
+          the same long quote three times — noise that buries the thing the
+          panel exists to show. */}
+      {groupBySource(slots).map(([quote, group]) => (
+        <div className="evidence" key={quote}>
+          {group.map(([key, slot]) => (
+            <div className="evidence-head" key={key} style={{ marginBottom: 2 }}>
+              <span className="evidence-key">
+                {key.replace("_", " ")}
+                {slot.superseded && " · corrected"}
+              </span>
+              <span className="evidence-val">{String(slot.value)}</span>
+            </div>
           ))}
-        </div>
-      )}
-
-      {trace.memory_updates?.case_hint && (
-        <div style={{ marginBottom: 8, fontSize: 12 }}>
-          <strong>Hint recorded:</strong> {trace.memory_updates.case_hint.case_type || "?"} /{" "}
-          {trace.memory_updates.case_hint.status || "?"} / {trace.memory_updates.case_hint.time_ref || "?"}
-        </div>
-      )}
-      {trace.memory_updates?.intent && (
-        <div style={{ marginBottom: 8, fontSize: 12 }}>
-          <strong>Intent:</strong> {trace.memory_updates.intent}
-        </div>
-      )}
-
-      <div style={{ marginBottom: 4, fontSize: 11, color: "var(--text-dim)" }}>Output guard</div>
-      {trace.guard_attempts?.map((g, i) => (
-        <div key={i} className={`guard-attempt ${g.violations?.length ? "fail" : "ok"}`}>
-          {g.violations?.length ? `attempt ${i + 1}: ${g.violations.length} violation(s)` : `attempt ${i + 1}: passed`}
-          {g.empty && <span className="badge badge-bad">empty reply</span>}
-          {g.truncated && <span className="badge badge-bad">truncated</span>}
-          {g.fallback && <span className="badge badge-neutral">safe template used</span>}
-          {g.violations?.map((v, j) => (
-            <div key={j} className="guard-viol">· {v}</div>
-          ))}
+          <div className="evidence-quote">“{quote}”</div>
         </div>
       ))}
 
-      {trace.tool_effects?.length > 0 && (
-        <div style={{ marginTop: 8 }}>
-          <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 4 }}>Tool effects</div>
-          {trace.tool_effects.map((t, i) => (
-            <div key={i} className="tool-effect">🔧 {t.summary}</div>
+      {memory.case_hints.length > 0 && (
+        <div className="evidence">
+          <div className="evidence-head">
+            <span className="evidence-key">claim hints</span>
+          </div>
+          {dedupeHints(memory.case_hints).map((h, i) => (
+            <div key={i} className="evidence-val" style={{ fontSize: 12.5, fontWeight: 500 }}>
+              {h.text}
+              <span className="muted" style={{ fontStyle: "normal", marginLeft: 6 }}>
+                {h.turns.length > 1 ? `turns ${h.turns.join(", ")}` : `turn ${h.turns[0]}`}
+              </span>
+            </div>
           ))}
         </div>
       )}
 
-      {trace.plan.visible_facts?.handoff_packet && (
-        <div style={{ marginTop: 10 }}>
-          <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 4 }}>
-            Handoff packet — nothing here needs to be repeated to the human
+      {memory.resolved_intent && (
+        <div className="evidence">
+          <div className="evidence-head">
+            <span className="evidence-key">what they want</span>
+            <span className="evidence-val">{memory.resolved_intent.replace(/_/g, " ")}</span>
+          </div>
+          {memory.intent_evidence_quote && <div className="evidence-quote">“{memory.intent_evidence_quote}”</div>}
+        </div>
+      )}
+
+      {(memory.candidate_case_id || memory.confirmed_case_id) && (
+        <div className="evidence">
+          <div className="evidence-head">
+            <span className="evidence-key">{memory.confirmed_case_id ? "confirmed claim" : "proposed, awaiting confirmation"}</span>
+            <span className="evidence-val">{memory.confirmed_case_id || memory.candidate_case_id}</span>
+          </div>
+        </div>
+      )}
+
+      {memory.consent_events.length > 0 && (
+        <div className="evidence">
+          <div className="evidence-head">
+            <span className="evidence-key">consent on record</span>
+            <span className={`tag ${memory.consent_events.at(-1).decision === "approved" ? "open" : ""}`}>
+              {memory.consent_events.at(-1).decision}
+            </span>
+          </div>
+          <div className="evidence-quote">“{memory.consent_events.at(-1).quote}”</div>
+        </div>
+      )}
+
+      {memory.followup_notes.length > 0 && (
+        <div className="evidence">
+          <div className="evidence-head"><span className="evidence-key">notes on file</span></div>
+          {memory.followup_notes.map((n, i) => (
+            <div key={i} style={{ fontSize: 12.5 }}>• {n}</div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function TurnCard({ trace }) {
+  if (!trace) return null;
+  const attempts = trace.guard_attempts || [];
+  const last = attempts[attempts.length - 1] || {};
+  const intervened = attempts.length > 1;
+  const packet = trace.plan.visible_facts?.handoff_packet;
+
+  return (
+    <section className="card">
+      <h3 className="card-title">
+        This turn
+        <span className="tag">{trace.phase_before} → {trace.phase_after}</span>
+      </h3>
+
+      <div className={`verdict ${last.violations?.length ? "fail" : ""}`}>
+        <span className="verdict-dot" />
+        {last.violations?.length
+          ? `Reply blocked — ${last.violations.length} violation(s)`
+          : intervened
+            ? `Reply approved after ${attempts.length} attempts`
+            : "Reply approved by the output guard"}
+      </div>
+      {attempts
+        .filter((a) => a.violations?.length)
+        .flatMap((a, i) => a.violations.map((v, j) => (
+          <div className="verdict-detail" key={`${i}-${j}`}>· {v}</div>
+        )))}
+
+      {trace.plan.directives?.length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <div className="evidence-key" style={{ marginBottom: 6 }}>Instructions in force</div>
+          {trace.plan.directives.map((d) => (
+            <span key={d} className="tag">{DIRECTIVE_LABELS[d] || d}</span>
+          ))}
+        </div>
+      )}
+
+      {trace.tool_effects?.length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <div className="evidence-key" style={{ marginBottom: 4 }}>Actions taken</div>
+          {trace.tool_effects.map((t, i) => (
+            <div key={i} className="tool-line">{t.summary}</div>
+          ))}
+        </div>
+      )}
+
+      {packet && (
+        <div style={{ marginTop: 12 }}>
+          <div className="evidence-key" style={{ marginBottom: 6 }}>
+            Handoff packet — the caller repeats none of this
           </div>
           <dl className="kv">
-            {Object.entries(trace.plan.visible_facts.handoff_packet).map(([k, v]) => (
-              <Fragment key={k}>
-                <dt>{k.replace(/_/g, " ")}</dt>
-                <dd>{Array.isArray(v) ? (v.length ? v.join("; ") : "—") : String(v ?? "—")}</dd>
-              </Fragment>
-            ))}
+            {Object.entries(packet)
+              .filter(([, v]) => v !== null && v !== "" && !(Array.isArray(v) && !v.length))
+              .map(([k, v]) => (
+                <Fragment key={k}>
+                  <dt>{k.replace(/_/g, " ")}</dt>
+                  <dd>{Array.isArray(v) ? v.join("; ") : String(v)}</dd>
+                </Fragment>
+              ))}
           </dl>
         </div>
       )}
 
-      <details className="raw-json" style={{ marginTop: 10 }}>
-        <summary>Raw trace JSON</summary>
+      <details className="dev" style={{ marginTop: 12 }}>
+        <summary>Developer trace</summary>
         <pre>{JSON.stringify(trace, null, 2)}</pre>
       </details>
-    </div>
+    </section>
   );
 }
 
 export default function Inspector({ state }) {
   if (!state) {
     return (
-      <div className="inspector-pane">
-        <div className="insp-section">
-          <div className="empty-hint">Create a session to see the SOP engine's internal state here.</div>
-        </div>
-      </div>
+      <aside className="inspector-pane">
+        <section className="card">
+          <h3 className="card-title">Inspector</h3>
+          <p className="muted">
+            Start a session to watch the procedure enforce itself — which gates are shut, what the agent
+            is allowed to know, and what the guard did with every reply.
+          </p>
+        </section>
+      </aside>
     );
   }
 
   const { facts, memory } = state;
   const lastAgentTurn = [...state.transcript].reverse().find((t) => t.role === "agent" && t.trace_event);
-  const lastTrace = lastAgentTurn?.trace_event;
+  const trace = lastAgentTurn?.trace_event;
+  const phoneticUsed = Object.values(memory.identity_slots).some((s) => s.tier === "phonetic");
 
   return (
-    <div className="inspector-pane">
-      <div className="insp-section">
-        <h3>Phase</h3>
-        <PhaseStepper phase={state.phase} />
-        {facts.escalation_reason && (
-          <div style={{ marginTop: 8 }}>
-            <span className="badge badge-bad">reason: {facts.escalation_reason}</span>
-          </div>
-        )}
-      </div>
+    <aside className="inspector-pane">
+      <section className="card">
+        <h3 className="card-title">Where the call is</h3>
+        <PhaseRail phase={state.phase} facts={facts} />
+        <GateNote phase={state.phase} facts={facts} />
+      </section>
 
-      <div className="insp-section">
-        <h3>Identity verification</h3>
-        <IdentityMeter facts={facts} />
-        <dl className="kv" style={{ marginTop: 10 }}>
-          <dt>Caller role</dt>
-          <dd>{facts.caller_role}</dd>
-          {facts.representative_of_party_id && (
-            <>
-              <dt>Representing</dt>
-              <dd>{facts.representative_of_party_id}</dd>
-            </>
-          )}
-          {facts.verified_party_id && (
-            <>
-              <dt>Verified party</dt>
-              <dd>{facts.verified_party_id}</dd>
-            </>
-          )}
-          {facts.caller_role === "representative" && (
-            <>
-              <dt>Consent status</dt>
-              <dd>{facts.consent_status} {facts.consent_poll_count > 0 && `(${facts.consent_poll_count} poll${facts.consent_poll_count > 1 ? "s" : ""})`}</dd>
-            </>
-          )}
-        </dl>
-      </div>
+      <IdentityCard facts={facts} phoneticUsed={phoneticUsed} />
+      <EvidenceCard memory={memory} />
+      <TurnCard trace={trace} />
 
-      <div className="insp-section">
-        <h3>Memory (cross-phase, with provenance)</h3>
-        {Object.keys(memory.identity_slots).length === 0 &&
-          memory.case_hints.length === 0 &&
-          !memory.resolved_intent && <div className="empty-hint">Nothing recorded yet.</div>}
-        {Object.entries(memory.identity_slots).map(([k, slot]) => (
-          <SlotItem key={k} label={k.replace("_", " ")} slot={slot} />
-        ))}
-        {memory.case_hints.map((h, i) => (
-          <div key={i} className="slot-item">
-            <div className="slot-label">case hint (turn {h.turn_index})</div>
-            <div className="slot-value">{[h.case_type, h.status, h.time_ref].filter(Boolean).join(" · ") || "—"}</div>
+      <section className="card">
+        <h3 className="card-title">This session</h3>
+        <div className="metrics">
+          <div className="metric">
+            <div className="metric-num">${facts.cost_usd.toFixed(4)}</div>
+            <div className="metric-label">cost so far</div>
           </div>
-        ))}
-        {memory.resolved_intent && (
-          <div className="slot-item">
-            <div className="slot-label">resolved intent</div>
-            <div className="slot-value">{memory.resolved_intent}</div>
-            <div className="slot-quote">“{memory.intent_evidence_quote}”</div>
+          <div className="metric">
+            <div className="metric-num">{facts.turns_used}</div>
+            <div className="metric-label">turns</div>
           </div>
-        )}
-        {memory.candidate_case_id && (
-          <div className="slot-item">
-            <div className="slot-label">candidate case (awaiting confirmation)</div>
-            <div className="slot-value">{memory.candidate_case_id}</div>
+          <div className="metric">
+            <div className="metric-num">{(facts.tokens_used / 1000).toFixed(1)}k</div>
+            <div className="metric-label">tokens</div>
           </div>
-        )}
-        {memory.confirmed_case_id && (
-          <div className="slot-item">
-            <div className="slot-label">confirmed case</div>
-            <div className="slot-value">{memory.confirmed_case_id}</div>
-          </div>
-        )}
-        {memory.followup_notes.length > 0 && (
-          <div className="slot-item">
-            <div className="slot-label">follow-up notes</div>
-            {memory.followup_notes.map((n, i) => (
-              <div key={i} className="slot-value" style={{ fontWeight: 400, fontSize: 12 }}>
-                • {n}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div className="insp-section">
-        <h3>Last turn</h3>
-        <LastTurnDetail trace={lastTrace} />
-      </div>
-
-      <div className="insp-section">
-        <h3>Usage this session</h3>
-        <div className="cost-grid">
-          <div className="cost-tile">
-            <div className="num">${facts.cost_usd.toFixed(4)}</div>
-            <div className="label">total cost</div>
-          </div>
-          <div className="cost-tile">
-            <div className="num">{facts.tokens_used.toLocaleString()}</div>
-            <div className="label">tokens</div>
-          </div>
-          <div className="cost-tile">
-            <div className="num">{facts.turns_used}</div>
-            <div className="label">turns</div>
-          </div>
-          <div className="cost-tile">
-            <div className="num">{facts.off_topic_strikes}</div>
-            <div className="label">off-topic strikes</div>
+          <div className="metric">
+            <div className="metric-num">
+              ${facts.turns_used ? (facts.cost_usd / facts.turns_used).toFixed(4) : "0.0000"}
+            </div>
+            <div className="metric-label">per turn</div>
           </div>
         </div>
-      </div>
-    </div>
+        {facts.off_topic_strikes > 0 && (
+          <div className="gate-note stopped" style={{ marginTop: 10 }}>
+            {facts.off_topic_strikes} off-topic strike{facts.off_topic_strikes > 1 ? "s" : ""} — 3 ends the session.
+          </div>
+        )}
+      </section>
+    </aside>
   );
 }

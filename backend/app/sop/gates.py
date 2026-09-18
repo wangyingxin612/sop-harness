@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.identity.matcher import MatchState, apply_factors
+from app.identity.matcher import MatchState, apply_factors, phonetic_match_used
 from app.identity.representatives import find_representative
 from app.sop.domain import DomainContext
 from app.sop.types import CallerRole, SessionFacts, VerificationStatus
@@ -21,6 +21,7 @@ def match_state_from_facts(facts: SessionFacts) -> MatchState:
 
 
 def write_match_state_into_facts(facts: SessionFacts, match: MatchState) -> None:
+    facts.phonetic_match_used = facts.phonetic_match_used or phonetic_match_used(match)
     facts.candidate_party_ids = list(match.candidate_party_ids)
     facts.matched_factor_types = list(match.matched_factor_types)
     facts.mismatch_count = match.mismatch_count

@@ -1,0 +1,50 @@
+[
+  {
+    "total_scenarios": 12,
+    "passed": 12,
+    "pass_rate": 1.0,
+    "containment_rate": 0.667,
+    "transfer_attribution": {
+      "off_topic_persistence": 1,
+      "escalation_or_gate": 3
+    },
+    "total_cost_usd": 0.8164,
+    "avg_cost_usd_per_scenario": 0.068,
+    "total_turns": 39,
+    "guard_repair_rate": 0.026,
+    "guard_fallback_rate": 0.0,
+    "config": "all-strong"
+  },
+  {
+    "total_scenarios": 12,
+    "passed": 11,
+    "pass_rate": 0.917,
+    "containment_rate": 0.667,
+    "transfer_attribution": {
+      "off_topic_persistence": 1,
+      "escalation_or_gate": 3
+    },
+    "total_cost_usd": 0.5557,
+    "avg_cost_usd_per_scenario": 0.0463,
+    "total_turns": 39,
+    "guard_repair_rate": 0.0,
+    "guard_fallback_rate": 0.0,
+    "config": "routed"
+  },
+  {
+    "total_scenarios": 12,
+    "passed": 11,
+    "pass_rate": 0.917,
+    "containment_rate": 0.667,
+    "transfer_attribution": {
+      "off_topic_persistence": 1,
+      "escalation_or_gate": 3
+    },
+    "total_cost_usd": 0.2003,
+    "avg_cost_usd_per_scenario": 0.0167,
+    "total_turns": 39,
+    "guard_repair_rate": 0.051,
+    "guard_fallback_rate": 0.0,
+    "config": "all-fast"
+  }
+]

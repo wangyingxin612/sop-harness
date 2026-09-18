@@ -1,0 +1,16 @@
+import { chromium } from "playwright";
+const browser = await chromium.launch();
+const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 2 });
+page.on("pageerror", (e) => console.log("PAGEERROR:", e.message));
+await page.goto("http://localhost:8000", { waitUntil: "networkidle" });
+await page.click("text=Start session");
+await page.waitForTimeout(600);
+await page.fill('input[type=text]', "I'm the policyholder. Margaret Chen, policy POL-9921, DOB 1985-03-15, SSN last four 4472. Calling about my denied healthcare claim from January.");
+await page.click("text=Send");
+await page.waitForTimeout(22000);
+await page.fill('input[type=text]', "yes that's the one");
+await page.click("text=Send");
+await page.waitForTimeout(22000);
+await page.mouse.move(5, 5);
+await page.screenshot({ path: "/tmp/ui_dark.png", fullPage: true });
+console.log("done");

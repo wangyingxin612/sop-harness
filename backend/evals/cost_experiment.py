@@ -85,12 +85,22 @@ def main() -> None:
     print("=" * 92)
 
     baseline = next((s for s in summaries if s["config"] == "all-strong"), None)
-    routed = next((s for s in summaries if s["config"] == "routed"), None)
-    if baseline and routed and baseline["total_cost_usd"]:
-        saved = 1 - routed["total_cost_usd"] / baseline["total_cost_usd"]
-        print(f"\nrouted vs all-strong: {saved:+.1%} cost, "
-              f"pass {routed['passed']}/{routed['total_scenarios']} vs {baseline['passed']}/{baseline['total_scenarios']}, "
-              f"guard repair {routed['guard_repair_rate']:.3f} vs {baseline['guard_repair_rate']:.3f}")
+    for s in summaries:
+        if not baseline or s["config"] == "all-strong" or not baseline["total_cost_usd"]:
+            continue
+        cheaper = 1 - s["total_cost_usd"] / baseline["total_cost_usd"]
+        print(
+            f"\n{s['config']} vs all-strong:"
+            f"\n  cost          {cheaper:.1%} cheaper"
+            f"\n  pass          {s['passed']}/{s['total_scenarios']} vs {baseline['passed']}/{baseline['total_scenarios']}"
+            f"\n  guard repair  {s['guard_repair_rate']:.3f} vs {baseline['guard_repair_rate']:.3f}"
+            f"   <- the sensitive signal: pass rate can hold while this rises"
+        )
+    print(
+        "\nCaveat: one run per config. Differences of a single scenario are within the"
+        "\nrun-to-run variance documented in EVAL.md §5 and should not be read as a"
+        "\nquality ranking on their own."
+    )
 
     Path(args.out).write_text(json.dumps(summaries, indent=2))
     print(f"\nWrote {args.out}")
