@@ -56,12 +56,22 @@ export default function Chat({
               : "Create a session to begin."}
           </div>
         )}
-        {messages.map((m, i) => (
-          <div key={i} className={`msg-row ${m.role}`}>
-            <div className="bubble">{m.text}</div>
-          </div>
-        ))}
-        <ConsentStrip status={consentStatus} policy={consentPolicy} checking={consentChecking} />
+        {messages.map((m, i) =>
+          m.role === "system" ? (
+            <ConsentStrip key={i} status={m.status} resolved />
+          ) : (
+            <div key={i} className={`msg-row ${m.role}`}>
+              <div className="bubble">{m.text}</div>
+            </div>
+          )
+        )}
+        {/* Pinned at the bottom only while it is LIVE. A pending
+            authorisation is something happening now and the caller should be
+            able to see it without scrolling; a resolved one is history and is
+            rendered above, at the point it happened. */}
+        {consentStatus === "pending" && (
+          <ConsentStrip status={consentStatus} policy={consentPolicy} checking={consentChecking} />
+        )}
 
         {streamingText !== null && (
           <div className="msg-row agent">

@@ -101,6 +101,15 @@ export default function App() {
     onTick: setState,
     onResolved: (next) => {
       setState(next);
+      // The resolution HAPPENED at this point in the conversation, so it
+      // belongs in the transcript at this point. Previously the strip was
+      // rendered at the bottom of the message list and therefore followed
+      // the caller down the whole rest of the call — a one-off event
+      // pretending to be a live status.
+      setMessages((m) => [
+        ...m,
+        { role: "system", kind: "consent", status: next?.facts?.consent_status },
+      ]);
       // Resolving the authorisation is also activity on the caller's behalf:
       // they have been sitting still on purpose, and nudging them the moment
       // the answer arrives would be exactly the wrong beat.

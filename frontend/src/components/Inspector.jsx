@@ -98,24 +98,28 @@ function GateNote({ phase, facts }) {
   return <div className="gate-note open">Full detail for the confirmed claim is available.</div>;
 }
 
-function IdentityCard({ facts, phoneticUsed }) {
+function IdentityCard({ facts, phoneticUsed, policy }) {
+  const verified = facts.verification_status === "verified";
+  const needed = policy?.min_distinct_factors ?? 3;
+  const maxMismatches = policy?.max_mismatches ?? 2;
+  const remaining = Math.max(0, maxMismatches - facts.mismatch_count);
   return (
     <section className="card">
       <h3 className="card-title">
         Identity gate
-        <span className={`rail-state ${facts.matched_factor_count >= 3 ? "open" : "locked"}`}>
-          {facts.matched_factor_count}/3
+        <span className={`rail-state ${facts.matched_factor_count >= needed ? "open" : "locked"}`}>
+          {facts.matched_factor_count}/{needed}
         </span>
       </h3>
 
       <div className="segbar">
-        {[0, 1, 2].map((i) => (
+        {Array.from({ length: needed }, (_, i) => (
           <span key={i} className={`seg ${i < facts.matched_factor_count ? "filled" : ""}`} />
         ))}
       </div>
 
       <div className="factor-chips">
-        {["full_name", "dob", "phone", "email", "id_last4"].map((f) => {
+        {(policy?.factor_types ?? ["full_name", "dob", "phone", "email", "id_last4"]).map((f) => {
           const matched = facts.matched_factor_types.includes(f);
           const isPhonetic = matched && f === "full_name" && phoneticUsed;
           return (
@@ -132,10 +136,30 @@ function IdentityCard({ facts, phoneticUsed }) {
           Name matched by sound, not exactly — recorded in the audit trail.
         </div>
       )}
+      {/* "Two locks the session" is a warning about something that can still
+          happen. Once the caller is through the gate it cannot: the identity
+          matcher only runs in VERIFY_ID (see machine.py — the phase branch
+          is the only caller of _identity_phase_transition), so mismatch_count
+          can never grow again and the lock can never fire on this path.
+          Leaving the red threat up after a successful verification was the
+          UI telling the caller they were still in danger of being locked out
+          of a session they had already been admitted to. Verified, it becomes
+          what it actually is: an audit fact. */}
       {facts.mismatch_count > 0 && (
-        <div className="gate-note stopped" style={{ marginTop: 10 }}>
-          {facts.mismatch_count} detail{facts.mismatch_count > 1 ? "s" : ""} didn't match. Two locks the session.
-        </div>
+        verified ? (
+          <div className="gate-note" style={{ marginTop: 10 }}>
+            {facts.mismatch_count} detail{facts.mismatch_count > 1 ? "s" : ""} didn't match before
+            verification succeeded — recorded in the audit trail.
+          </div>
+        ) : (
+          <div className="gate-note stopped" style={{ marginTop: 10 }}>
+            {facts.mismatch_count} detail{facts.mismatch_count > 1 ? "s" : ""} didn't match.
+            {" "}
+            {remaining === 1
+              ? "One more locks the session."
+              : `${remaining} more lock the session.`}
+          </div>
+        )
       )}
 
       {(facts.caller_role !== "unknown" || facts.verified_party_id) && (
@@ -434,7 +458,7 @@ export default function Inspector({ state, idleBudgetSeconds }) {
         )}
       </section>
 
-      <IdentityCard facts={facts} phoneticUsed={phoneticUsed} />
+      <IdentityCard facts={facts} phoneticUsed={phoneticUsed} policy={state.identity_policy} />
       <EvidenceCard memory={memory} />
       <TurnCard trace={trace} />
 

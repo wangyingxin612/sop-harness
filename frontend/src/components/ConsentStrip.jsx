@@ -28,8 +28,30 @@ const COPY = {
   },
 };
 
-export default function ConsentStrip({ status, policy, checking }) {
+// Past tense, one line. Once the authorisation has come back, the caller does
+// not need the explanation of what waiting means — they need to know which way
+// it went, at the moment it went that way.
+const RESOLVED_COPY = {
+  approved: "Authorisation received — full claim detail unlocked.",
+  timed_out: "No response to the authorisation request — detail stays restricted.",
+  declined: "Authorisation declined — detail stays restricted.",
+};
+
+export default function ConsentStrip({ status, policy, checking, resolved }) {
   if (!status || status === "not_requested") return null;
+
+  if (resolved) {
+    const line = RESOLVED_COPY[status];
+    if (!line) return null;
+    return (
+      <div className={`consent-marker consent-${status}`}>
+        <span className="consent-marker-rule" />
+        <span className="consent-marker-text">{line}</span>
+        <span className="consent-marker-rule" />
+      </div>
+    );
+  }
+
   const copy = COPY[status];
   if (!copy) return null;
 

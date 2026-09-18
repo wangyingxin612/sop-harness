@@ -591,3 +591,17 @@ details.dev pre {
 .latency-legend i { display: inline-block; width: 7px; height: 7px; border-radius: 2px;
   margin-right: 4px; vertical-align: middle; }
 .latency-words { margin-left: auto; color: var(--text-faint); }
+
+/* A resolved authorisation is a TIMELINE MARKER, not a status panel: it sits
+   at the point in the conversation where it happened and stays there. The
+   full-width rule is what makes it read as "something occurred here" rather
+   than as another participant speaking. */
+.consent-marker {
+  display: flex; align-items: center; gap: 10px;
+  margin: 16px 0; font-size: 0.76rem; color: var(--text-dim);
+}
+.consent-marker-rule { flex: 1; height: 1px; background: var(--border-soft); }
+.consent-marker-text { flex: none; letter-spacing: 0.01em; }
+.consent-marker.consent-approved .consent-marker-text { color: var(--open); }
+.consent-marker.consent-timed_out .consent-marker-text,
+.consent-marker.consent-declined .consent-marker-text { color: var(--stopped); }

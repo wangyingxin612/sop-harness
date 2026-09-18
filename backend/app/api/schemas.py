@@ -73,6 +73,24 @@ def _consent_policy(state: SessionState, domain: DomainContext | None) -> dict |
     }
 
 
+def _identity_policy(spec: SopSpec | None) -> dict | None:
+    """The gate's thresholds, published rather than hardcoded in the UI.
+
+    The Inspector was printing "Two locks the session" as a literal, which
+    quietly made a spec value part of the frontend. A different SOP with a
+    different `max_mismatches` would have had the interface confidently
+    stating the wrong number — the same class of mistake as any other place
+    where configuration leaks into code.
+    """
+    if spec is None:
+        return None
+    return {
+        "min_distinct_factors": spec.min_distinct_factors,
+        "max_mismatches": spec.max_mismatches,
+        "factor_types": list(spec.identity_factor_types),
+    }
+
+
 def serialize_state(
     state: SessionState,
     spec: SopSpec | None = None,
@@ -83,6 +101,7 @@ def serialize_state(
     return {
         "idle_policy": _idle_policy(state, spec),
         "disposition": classify(state).as_dict(),
+        "identity_policy": _identity_policy(spec),
         "consent_policy": _consent_policy(state, domain),
         "session_id": state.session_id,
         "sop_name": state.sop_name,
