@@ -1,0 +1,131 @@
+# SOP spec for insurance claims support (DESIGN.md §6).
+#
+# This file is the ONLY insurance-specific configuration the engine reads.
+# `bank_kyc.yaml` (see DESIGN.md §9.2 P2) follows the identical schema —
+# proof that the runtime in app/sop, app/guards, app/llm is not insurance
+# code with a thin wrapper, but a generic SOP engine.
+
+name: insurance_claims
+display_name: "Insurance Claims Support"
+
+identity:
+  factors: [full_name, dob, phone, email, id_last4]
+  min_distinct: 3
+  max_mismatches: 2
+
+escalation:
+  # identity lockout uses identity.max_mismatches above, not a separate
+  # attempts counter (see app/sop/spec.py for why)
+  max_off_topic_strikes: 3
+  max_injection_flags: 2
+  off_topic_decay_after_turns: 2
+  max_stalled_verify_turns: 6
+
+# Tools available in every non-terminal phase, in addition to the phase's own
+# list (DESIGN.md §7.1: escalation is reachable from anywhere; it is not a
+# privilege that belongs to any one phase).
+always_available_tools: [transfer_to_human]
+
+phases:
+  - id: VERIFY_ID
+    freedom: STRICT
+    stream: buffered              # replies are 1-3 sentences; buffering costs nothing visible (§7.11)
+    model_tier: fast              # short, templated-leaning replies; escalate to strong only if needed
+    tools: [request_consent]      # representative-consent path (§7.10); everything else is conversational
+    base_directives: [VERIFY_RATIONALE, NO_DISCLOSURE]
+
+  - id: RESOLVE_INTENT
+    freedom: OPEN
+    stream: sentence_gated
+    model_tier: strong
+    tools: []
+    base_directives: [CONFIRM_CANDIDATE, INDEX_ONLY]
+
+  - id: PROCESS_CASE
+    freedom: OPEN
+    stream: sentence_gated
+    model_tier: strong
+    tools: [get_case_detail, get_document_guidance, get_alternatives, create_followup]
+    base_directives: [GROUNDING_ONLY, NO_COMMITMENT, ALTERNATIVE_LADDER_FIRST]
+
+  - id: POST_PROCESS
+    freedom: OPEN
+    stream: sentence_gated
+    model_tier: strong
+    tools: [prepare_summary, send_summary_email]
+    base_directives: [OFFER_SUMMARY, CONSENT_REQUIRED, SEND_TO_FILE_ADDRESS_ONLY]
+
+  - id: HUMAN_HANDOFF
+    freedom: STRICT
+    stream: buffered
+    model_tier: fast
+    tools: []
+    base_directives: [HANDOFF_CLOSING]
+
+  - id: ABUSE_TERMINATED
+    freedom: STRICT
+    stream: buffered
+    model_tier: fast
+    tools: []
+    base_directives: [ABUSE_CLOSING]
+
+  - id: CLOSED
+    freedom: STRICT
+    stream: buffered
+    model_tier: fast
+    tools: []
+    base_directives: [SESSION_CLOSING]
+
+directive_texts:
+  NO_DISCLOSURE: >
+    Do not state, confirm, or hint at any claim detail, claim status, policy detail, or amount.
+    Nothing about the caller's case is known to you yet in this phase.
+  VERIFY_RATIONALE: >
+    If asked why verification is required, explain plainly that claim details are protected
+    information and confirming identity first protects the caller, not just the company.
+  INDEX_ONLY: >
+    You may reference the type, status, and rough date of the caller's claims to help identify
+    which one they mean. Do not state denial reasons, required documents, or any amount — those
+    belong to a later step.
+  CONFIRM_CANDIDATE: >
+    When the available details narrow the caller to a specific claim, restate it in plain language
+    (type, status, approximate date) and ask them to confirm before treating it as selected.
+  GROUNDING_ONLY: >
+    Answer only from the claim data and guidance explicitly provided to you this turn. Never state
+    an amount, date, deadline, or status that is not present in that data.
+  NO_COMMITMENT: >
+    Never promise a specific payment, approval, or outcome. State only what the record currently
+    shows, attributed to the record (for example "the record shows..." or "on file, the allowed
+    maximum is..."), never as a promise of what the caller will receive.
+  ALTERNATIVE_LADDER_FIRST: >
+    If the caller cannot provide a requested document, offer the graded alternative path before
+    suggesting a human transfer: first a replacement copy from the original source, then a partial
+    submission with a note, and only then a human representative.
+  OFFER_SUMMARY: >
+    Offer to email a summary of this conversation: what was discussed, the claim status or outcome,
+    and the next steps. Make clear the caller can decline, and proceed either way once they answer.
+  CONSENT_REQUIRED: >
+    Do not send the summary email until the caller has clearly agreed. A clear decline is a valid,
+    complete outcome — do not push back on it.
+  SEND_TO_FILE_ADDRESS_ONLY: >
+    The summary can only be sent to the email address already on file. If the caller asks for a
+    different address, explain that changing contact details requires a separate verification step,
+    and offer to note the request for that team instead.
+  HANDOFF_CLOSING: >
+    Let the caller know they are being connected to a human representative, and briefly say what
+    information is being carried over so they do not have to repeat themselves.
+  ABUSE_CLOSING: >
+    Close the session politely but firmly. State plainly that this line is for insurance claims
+    support and that repeated off-topic requests mean the session needs to end here.
+  SESSION_CLOSING: >
+    Thank the caller and close warmly. If they have another question, you may reopen the case
+    discussion without asking them to re-verify.
+
+# Deterministic, rotating refusal copy (DESIGN.md §7.9 point 4 — refusals are
+# templated, never generated, to remove the "just answer this one thing"
+# attack surface entirely).
+refusal_templates:
+  - "I'm only able to help with your insurance claims and policy questions on this line — I can't help with that."
+  - "That's outside what I can assist with here — I'm set up specifically for insurance claims support."
+  - "I can't help with that on this call. I'm here for questions about your insurance claims and policy."
+  - "That falls outside insurance claims support, which is what I'm able to help with here."
