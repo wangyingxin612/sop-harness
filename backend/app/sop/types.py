@@ -59,6 +59,27 @@ class ConsentStatus(str, Enum):
 IDENTITY_FACTOR_TYPES = ("full_name", "dob", "phone", "email", "id_last4")
 
 
+# Every reason a session can end, in one place.
+#
+# This started as string literals scattered across machine.py, effects.py,
+# the close endpoint and the sweeper, with a test that scanned the source to
+# check each had a disposition mapped. That test then failed to catch a
+# reason written as a ternary — the guard was as fragile as the thing it was
+# guarding. A registry makes the question "is this reason known?" answerable
+# by asking, rather than by parsing.
+END_REASONS: dict[str, str] = {
+    "caller_requested_human": "the caller asked for a person",
+    "identity_verification_failed": "identity could not be established",
+    "repeated_prompt_injection_attempts": "repeated attempts to manipulate the agent",
+    "repeated_off_topic_requests": "persistent out-of-scope requests",
+    "agent_initiated_transfer": "the agent judged a person was needed",
+    "caller_inactive": "silence past the SOP's ceiling",
+    "caller_window_closed": "the window was closed and never came back",
+    "caller_finished": "the caller said they were done",
+    "operator_closed": "closed from the operations side",
+}
+
+
 class ScopeRing(str, Enum):
     CORE = "core"
     ADJACENT = "adjacent"
@@ -187,6 +208,22 @@ class SessionFacts:
     # set only when transition() routes to HUMAN_HANDOFF / ABUSE_TERMINATED —
     # the source of truth for "why", used by policy.py and the handoff packet
     escalation_reason: Optional[str] = None
+    # The browser told us the tab was closing (pagehide, sent with keepalive).
+    # EVIDENCE, not proof: pagehide also fires on a refresh or a navigation.
+    # It only becomes a conclusion once the session then stays silent past
+    # its ceiling — see session/sweeper.py. Kept on facts rather than in the
+    # event log so that disposition.classify() stays a pure function of
+    # state, which is the property that makes the metric defensible.
+    window_closed: bool = False
+    # The caller has said, at least once, that they are finished.
+    #
+    # STICKY on purpose. This used to be read only off the current turn's
+    # signals, so "that's it, thanks" was consumed to move into POST_PROCESS
+    # and then forgotten. The caller was asked about the summary, answered,
+    # and was then asked AGAIN whether they needed anything else — having
+    # already said twice that they did not. Intent that the caller has
+    # expressed does not stop being true because a phase boundary happened.
+    wrap_up_signalled: bool = False
 
     def is_verified(self) -> bool:
         return self.verification_status == VerificationStatus.VERIFIED

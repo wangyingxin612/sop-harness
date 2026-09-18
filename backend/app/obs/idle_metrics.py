@@ -48,6 +48,7 @@ KNOWN_EVENTS = {
     "idle_nudge_recovered",
     "idle_expired",
     "idle_ceiling_reached",
+    "session_window_closed",
 }
 
 _LOCK = Lock()

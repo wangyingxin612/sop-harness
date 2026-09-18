@@ -77,6 +77,15 @@ SEND_NOW = Directive(
         "else they need. Do NOT sign off yet: the call isn't over until they say they're done."
     ),
 )
+SEND_AND_CLOSE = Directive(
+    id="SEND_AND_CLOSE",
+    text=(
+        "The caller just agreed to receive the summary AND has already said they have nothing further. "
+        "Call send_summary_email now, to the address on file. Then confirm in one sentence that it's on "
+        "its way and close the call warmly. Do NOT ask whether there's anything else — they have "
+        "already answered that."
+    ),
+)
 CLOSE_OUT = Directive(
     id="CLOSE_OUT",
     text=(
@@ -352,15 +361,29 @@ def resolve(state: SessionState, domain: DomainContext, spec: SopSpec) -> TurnPl
         }
         forbidden = ["sending to any email address other than the one on file"]
 
-        just_approved = bool(memory.consent_events) and memory.consent_events[-1].get(
-            "decision"
-        ) == "approved" and memory.consent_events[-1].get("turn_index") == state.next_turn_index() - 1
-        just_declined = bool(memory.consent_events) and memory.consent_events[-1].get(
-            "decision"
-        ) == "declined" and memory.consent_events[-1].get("turn_index") == state.next_turn_index() - 1
+        # "this turn" is next_turn_index(), NOT next_turn_index() - 1.
+        #
+        # resolve() runs BEFORE the caller's turn is appended to the
+        # transcript (the orchestrator appends after ACT), so at this point
+        # next_turn_index() already IS the index transition() stamped onto
+        # the consent event a moment ago. The `- 1` made both of these
+        # permanently False: SEND_NOW never fired once, and the summary email
+        # was going out only because the model volunteered the tool call from
+        # the pending_action in visible_facts. It worked nearly every time,
+        # which is exactly why it went unnoticed — a deterministic
+        # instruction had quietly become a hope.
+        this_turn = state.next_turn_index()
+        last_consent = memory.consent_events[-1] if memory.consent_events else {}
+        just_approved = last_consent.get("decision") == "approved" and last_consent.get("turn_index") == this_turn
+        just_declined = last_consent.get("decision") == "declined" and last_consent.get("turn_index") == this_turn
 
         email_decided = facts.email_sent or facts.email_skipped
-        if email_decided:
+        # The question is settled the moment the caller answers it, not only
+        # once the tool has run. Without `just_approved` here, the turn that
+        # SENDS the summary was still carrying "offer the caller a summary"
+        # alongside "send it and close" — two instructions that contradict
+        # each other, resolved by whichever the model weighted more.
+        if email_decided or just_approved or just_declined:
             # The summary question is settled — drop the directives that ask
             # it. Leaving them in made the agent offer the summary a SECOND
             # time after already sending it (found by testing the
@@ -369,7 +392,10 @@ def resolve(state: SessionState, domain: DomainContext, spec: SopSpec) -> TurnPl
             directives = [d for d in directives if d.id not in ("OFFER_SUMMARY", "CONSENT_REQUIRED")]
 
         if just_approved:
-            directives.append(SEND_NOW)
+            # Asking "anything else?" after someone has already said they are
+            # done is a round trip that exists only because the system forgot.
+            # When the wrap-up intent is on file, send and close in one turn.
+            directives.append(SEND_AND_CLOSE if facts.wrap_up_signalled else SEND_NOW)
         elif just_declined:
             directives.append(ACKNOWLEDGE_DECLINE)
         elif email_decided:

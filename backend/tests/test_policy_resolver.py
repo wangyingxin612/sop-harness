@@ -9,6 +9,7 @@ from app.sop.machine import decide
 from app.sop.policy import ACKNOWLEDGE_EMOTION, resolve
 from app.sop.types import (
     CaseHint,
+    PendingAction,
     Phase,
     ScopeRing,
     SessionState,
@@ -315,18 +316,67 @@ class TestPostProcessCloseOut:
         ids = [d.id for d in plan.directives]
         assert "OFFER_SUMMARY" in ids
 
-    def test_send_now_directive_also_asks_about_further_needs(self, domain, spec):
-        """The deployed demo ended on 'I'll get that sent over' and then just
-        stopped — the caller was left with no prompt and the phase stranded
-        in POST_PROCESS."""
+    def _approve_the_send(self, domain, spec, *, wrap_up_already_signalled: bool):
+        """Drive the REAL path: a caller saying yes, through transition(),
+        which is what stamps the consent event's turn index.
+
+        The previous version of this test hand-built the consent event with
+        `turn_index=state.next_turn_index() - 1`, copying the same off-by-one
+        the resolver had. It passed for months while `just_approved` was
+        never once true in production — the email went out only because the
+        model volunteered the tool call. A test that constructs its input the
+        way the buggy code reads it cannot catch the bug; it has to go
+        through the code that actually writes the value.
+        """
         state = self._post_process_state(domain, spec)
-        state.memory.consent_events.append(
-            {"action_type": "send_summary_email", "decision": "approved",
-             "turn_index": state.next_turn_index() - 1, "quote": "yes please"}
+        state.facts.pending_action = PendingAction(
+            action_type="send_summary_email", requested_at_turn=0
         )
-        state, plan = decide(state, signals(), domain, spec)
+        state.facts.wrap_up_signalled = wrap_up_already_signalled
+        return decide(
+            state,
+            signals(consent_response=True, turn_index=state.next_turn_index(),
+                    raw_message="yes please, send it"),
+            domain, spec,
+        )
+
+    def test_approving_the_send_actually_fires_a_send_directive(self, domain, spec):
+        """The regression that matters: SEND_NOW / SEND_AND_CLOSE must fire on
+        the turn the caller agrees, not be left to the model's initiative."""
+        _, plan = self._approve_the_send(domain, spec, wrap_up_already_signalled=False)
+        ids = [d.id for d in plan.directives]
+        assert "SEND_NOW" in ids, f"no send directive fired; got {ids}"
+        assert "send_summary_email" in plan.allowed_tools
+
+    def test_send_now_directive_also_asks_about_further_needs(self, domain, spec):
+        """When the caller has NOT said they're done, the agent sends and asks
+        — it does not assume the call is over."""
+        _, plan = self._approve_the_send(domain, spec, wrap_up_already_signalled=False)
         send_now = next(d for d in plan.directives if d.id == "SEND_NOW")
         assert "anything else" in send_now.text.lower()
+
+    def test_send_and_close_when_they_already_said_they_were_done(self, domain, spec):
+        """'That's it, thanks' earlier in the call is still true after the
+        summary question. Asking again is a round trip that exists only
+        because the system forgot."""
+        _, plan = self._approve_the_send(domain, spec, wrap_up_already_signalled=True)
+        ids = [d.id for d in plan.directives]
+        assert "SEND_AND_CLOSE" in ids
+        assert "SEND_NOW" not in ids
+        text = next(d for d in plan.directives if d.id == "SEND_AND_CLOSE").text.lower()
+        assert "do not ask whether there's anything else" in text
+
+    def test_phase_settles_to_closed_once_the_email_actually_sends(self, domain, spec):
+        """settle_phase() re-checks the terminal guard after tool effects —
+        the send happens during ACT, long after transition() ran, so without
+        this the caller gets a warm sign-off and stays in an open session."""
+        from app.sop.machine import settle_phase
+
+        state, _ = self._approve_the_send(domain, spec, wrap_up_already_signalled=True)
+        assert state.phase == Phase.POST_PROCESS      # not yet — nothing sent
+        state.facts.email_sent = True                 # the tool effect lands
+        settle_phase(state)
+        assert state.phase == Phase.CLOSED
 
     def test_conversation_can_actually_reach_closed(self, domain, spec):
         state = self._post_process_state(domain, spec, sent=True)
@@ -387,3 +437,26 @@ class TestConsentIsGrounded:
         state.memory.confirmed_case_id = "CL-2048"
         state, plan = decide(state, signals(), domain, spec)
         assert "consent" not in plan.visible_facts
+
+
+class TestSendTurnDirectivesDoNotContradict:
+    """The turn that sends the summary was simultaneously being told to OFFER
+    one. Both instructions were live, and which won was up to the model."""
+
+    def test_offer_is_dropped_on_the_turn_the_caller_says_yes(self, domain, spec):
+        state = make_state(phase=Phase.POST_PROCESS)
+        state.facts.verified_party_id = "P9"
+        state.memory.confirmed_case_id = "CL-2048"
+        state.facts.pending_action = PendingAction(
+            action_type="send_summary_email", requested_at_turn=0
+        )
+        _, plan = decide(
+            state,
+            signals(consent_response=True, turn_index=state.next_turn_index(),
+                    raw_message="yes please"),
+            domain, spec,
+        )
+        ids = [d.id for d in plan.directives]
+        assert "SEND_NOW" in ids
+        assert "OFFER_SUMMARY" not in ids
+        assert "CONSENT_REQUIRED" not in ids

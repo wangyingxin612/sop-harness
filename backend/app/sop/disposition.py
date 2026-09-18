@@ -34,7 +34,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.sop.types import ConsentStatus, Phase, SessionState
+from app.sop.types import END_REASONS, ConsentStatus, Phase, SessionState
 
 CONTAINED = "contained"
 TRANSFERRED = "transferred"
@@ -70,6 +70,14 @@ DISPOSITIONS: dict[str, DispositionSpec] = {
     "ABANDONED_AFTER_SILENCE": DispositionSpec(
         "ABANDONED_AFTER_SILENCE", ABANDONED,
         "Caller went silent; closed by the idle ladder", "none", False),
+    # Deliberately distinct from silence. Someone who closes the tab has
+    # decided to leave; someone who goes quiet may have been interrupted, or
+    # may be reading, or may be on hold with their clinic. Same outcome
+    # class, different product problem — and the fix for one is not the fix
+    # for the other, so collapsing them would hide both.
+    "ABANDONED_WINDOW_CLOSED": DispositionSpec(
+        "ABANDONED_WINDOW_CLOSED", ABANDONED,
+        "Caller closed the window and did not return", "none", True),
     "TRANSFERRED_CALLER_REQUEST": DispositionSpec(
         "TRANSFERRED_CALLER_REQUEST", TRANSFERRED,
         "Caller asked for a person", "general", False),
@@ -109,6 +117,18 @@ _REASON_TO_CODE = {
 }
 
 _UNMAPPED = "TRANSFERRED_AGENT_JUDGEMENT"
+
+# Reasons that end a session without it being an escalation. They are handled
+# on the CLOSED branch of classify() rather than through _REASON_TO_CODE.
+_NON_ESCALATION_REASONS = {
+    "caller_inactive", "caller_window_closed", "caller_finished", "operator_closed",
+}
+
+
+def unmapped_end_reasons() -> set[str]:
+    """Registry entries no branch of classify() accounts for. Empty, or a
+    test fails — see tests/test_disposition.py."""
+    return set(END_REASONS) - set(_REASON_TO_CODE) - _NON_ESCALATION_REASONS
 
 
 def phases_reached(state: SessionState) -> set[str]:
@@ -171,7 +191,9 @@ def classify(state: SessionState) -> Disposition:
         # Only silence is abandonment. A call closed because the caller said
         # they were done, or because an operator closed it, is an ordinary
         # ending and is classified by what actually happened in it.
-        if facts.escalation_reason == "caller_inactive":
+        if facts.escalation_reason == "caller_window_closed":
+            code = "ABANDONED_WINDOW_CLOSED"
+        elif facts.escalation_reason == "caller_inactive":
             code = "ABANDONED_AFTER_SILENCE"
         elif Phase.PROCESS_CASE.value not in phases_reached(state):
             code = "CLOSED_BEFORE_CASE_WORK"

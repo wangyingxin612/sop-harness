@@ -8,13 +8,14 @@ import pytest
 
 from app.sop.disposition import (
     CONTAINED,
+    unmapped_end_reasons,
     DISPOSITIONS,
     TRANSFERRED,
     _REASON_TO_CODE,
     classify,
     containment_rate,
 )
-from app.sop.types import ConsentStatus, Phase, SessionState, Turn
+from app.sop.types import END_REASONS, ConsentStatus, Phase, SessionState, Turn
 
 APP = Path(__file__).resolve().parents[1] / "app"
 
@@ -40,19 +41,52 @@ def _with_phase_trace(st: SessionState, *phases: Phase) -> SessionState:
 # reason must not silently fall through to a generic code.
 # ---------------------------------------------------------------------------
 
-def test_every_escalation_reason_in_the_codebase_has_a_disposition():
-    """Scans the source for escalation_reason assignments. If someone adds a
-    new reason without deciding what it means operationally, this fails —
-    which is the entire argument for an explicit table over string munging.
-    `caller_inactive` is set by the close endpoint, not an escalation, and is
-    handled on the CLOSED branch instead."""
+def test_every_end_reason_in_the_registry_has_a_disposition():
+    """The registry (types.END_REASONS) is the single source of truth for why
+    a session ends. Adding one without deciding what it means operationally
+    fails here.
+
+    This replaced a test that scanned the source for `escalation_reason = "..."`
+    assignments — which then missed a reason written as a ternary in the
+    sweeper. The guard was as fragile as the thing it guarded; asking a
+    registry is not."""
+    assert unmapped_end_reasons() == set()
+
+
+def test_every_assigned_reason_is_in_the_registry():
+    """The other direction: code must not invent a reason the registry has
+    never heard of, or it would classify as a generic transfer and nobody
+    would notice.
+
+    The match is bounded to the assignment EXPRESSION — a quoted literal, a
+    parenthesised ternary, or a variable — rather than to a fixed window of
+    characters after the name. A first attempt used `text[m.end():m.end()+200]`
+    and picked up string literals from whatever happened to follow, which is
+    the same class of mistake as a detector that fires on nearby text instead
+    of on its target.
+    """
+    assign = re.compile(
+        r"escalation_reason\s*=\s*"
+        r"(\([^)]*\)"        # parenthesised expression, e.g. a ternary
+        r'|"[a-z_]+"'         # a bare string literal
+        r"|[A-Za-z_][\w.]*)"  # a variable or attribute
+    )
     found = set()
     for path in APP.rglob("*.py"):
-        for m in re.finditer(r'escalation_reason\s*=\s*"([a-z_]+)"', path.read_text()):
-            found.add(m.group(1))
+        for m in assign.finditer(path.read_text()):
+            found |= set(re.findall(r'"([a-z_]+)"', m.group(1)))
     assert found, "scan found nothing — the pattern has drifted, fix the test"
-    unmapped = found - set(_REASON_TO_CODE) - {"caller_inactive"}
-    assert not unmapped, f"escalation reasons with no disposition: {sorted(unmapped)}"
+    invented = found - set(END_REASONS)
+    assert not invented, f"reasons assigned but not in END_REASONS: {sorted(invented)}"
+
+
+def test_client_may_not_assert_a_server_only_reason():
+    """A browser can say it gave up. It does not get to declare an identity
+    failure — that is a conclusion only the server is entitled to reach."""
+    from app.api.main import CLOSE_REASONS
+    assert CLOSE_REASONS <= set(END_REASONS)
+    assert "identity_verification_failed" not in CLOSE_REASONS
+    assert "caller_window_closed" not in CLOSE_REASONS
 
 
 def test_every_code_in_the_table_is_self_consistent():

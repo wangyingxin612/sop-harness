@@ -35,7 +35,21 @@ export default function App() {
 
   // Dark by default — this is an operations instrument, not a consumer chat
   // app — but the preference is remembered and respected.
-  const [theme, setTheme] = useState(() => localStorage.getItem("sop-theme") || "dark");
+  // Light by default. A claims desk is a daytime, office, shared-screen
+  // context — and a reviewer opening the demo for the first time should see
+  // the mode the product would actually ship in, not the one its author
+  // happens to develop in. A saved choice still wins, and so does an
+  // explicit OS preference for dark.
+  const [theme, setTheme] = useState(() => {
+    try {
+      const saved = localStorage.getItem("sop-theme");
+      if (saved === "dark" || saved === "light") return saved;
+    } catch { /* private mode */ }
+    const prefersDark =
+      typeof window !== "undefined" &&
+      window.matchMedia?.("(prefers-color-scheme: dark)").matches;
+    return prefersDark ? "dark" : "light";
+  });
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
     try { localStorage.setItem("sop-theme", theme); } catch { /* private mode */ }
@@ -93,6 +107,18 @@ export default function App() {
       resetIdle();
     },
   });
+
+  // The one thing the server can never see for itself. `pagehide` fires on
+  // a real close, but also on a refresh or a navigation — so this is sent as
+  // evidence, not as a verdict, and the server only concludes abandonment if
+  // the session then stays silent past its ceiling. `keepalive` is what makes
+  // the request survive the page going away.
+  useEffect(() => {
+    if (!sessionId) return;
+    const onLeave = () => reportEvent(sessionId, "session_window_closed", {});
+    window.addEventListener("pagehide", onLeave);
+    return () => window.removeEventListener("pagehide", onLeave);
+  }, [sessionId]);
 
   async function startSession({ silent = false, keepMessages = false } = {}) {
     const s = await createSession({ sopName, consentScenario, apiKey });

@@ -20,6 +20,7 @@ from app.obs.export import render_transcript_html
 from app.obs.idle_metrics import build_report, record_event
 from app.session.orchestrator import run_turn
 from app.session.store import STORE
+from app.session.sweeper import idle_seconds, sweep
 from app.sop.disposition import DISPOSITIONS, classify, containment_rate
 from app.sop.domain import DomainContext, load_domain
 from app.sop.spec import SopSpec, load_spec
@@ -31,6 +32,11 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 SOPS_DIR = BACKEND_DIR / "sops"
 FIXTURES_DIR = BACKEND_DIR / "fixtures"
 CONSENT_PATH = str(FIXTURES_DIR / "consent_scenarios.json")
+
+# Total wall time spent revealing a reply, however long it is. Short enough
+# that it reads as "the message arrived" rather than "the system is slow",
+# long enough that text does not simply flash into existence.
+REVEAL_BUDGET_S = 0.6
 
 app = FastAPI(title="SOP Harness API")
 app.add_middleware(
@@ -171,14 +177,11 @@ def export_session(session_id: str):
     return render_transcript_html(state)
 
 
-# Why a session was closed from outside the conversation. Validated rather
-# than free text because this string becomes the session's DISPOSITION, and
-# a disposition taxonomy that accepts anything is a statistic nobody can use.
-CLOSE_REASONS = {
-    "caller_inactive": "the idle ladder ran out",
-    "caller_finished": "the caller indicated they were done",
-    "operator_closed": "closed from the operations side",
-}
+# Which of the registry's end reasons a CLIENT is allowed to assert. Narrower
+# than END_REASONS on purpose: a browser may report that it gave up or that
+# the caller said they were done, but it does not get to declare an identity
+# failure or an abuse termination — those are the server's conclusions.
+CLOSE_REASONS = {"caller_inactive", "caller_finished", "operator_closed"}
 
 
 @app.post("/api/sessions/{session_id}/close")
@@ -265,6 +268,14 @@ def post_client_event(session_id: str, req: ClientEventRequest):
     # them, but then the metric would be reporting the client's belief about
     # the policy rather than the policy — and the whole point is to find out
     # whether the policy is right.
+    # A closing tab is the one signal the server can never observe for
+    # itself, and it is the difference between "walked away mid-conversation"
+    # and "closed the tab and left". Recorded as evidence on the session; it
+    # only becomes a conclusion if the session then stays silent past its
+    # ceiling (see session/sweeper.py).
+    if req.event == "session_window_closed" and not state.facts.window_closed:
+        state.facts.window_closed = True
+        STORE.update(state)
     payload.setdefault("phase", state.phase.value)
     if phase_spec is not None:
         payload.setdefault("response_effort", phase_spec.response_effort)
@@ -285,6 +296,37 @@ def eval_report(report: str = "latest.json"):
     return render(report)
 
 
+def _ts(value: str):
+    from datetime import datetime, timezone
+    try:
+        dt = datetime.fromisoformat(value)
+    except (ValueError, TypeError):
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _talk_time_s(state: SessionState) -> int | None:
+    """First caller message to last caller message.
+
+    This is the number that belongs in an average handle time. Measuring to
+    the CLOSE instead would fold in the idle ceiling — so an abandoned call
+    would report fifteen minutes of "handling" during which nothing happened,
+    and the metric would get worse every time we made the bot more patient."""
+    callers = [t for t in state.transcript if t.role == "caller"]
+    if len(callers) < 2:
+        return 0 if callers else None
+    first, last = _ts(callers[0].ts), _ts(callers[-1].ts)
+    return round((last - first).total_seconds()) if first and last else None
+
+
+def _span_s(state: SessionState) -> int | None:
+    """Session open to last activity of any kind — including the silence at
+    the end. Useful for capacity, misleading for handle time."""
+    start = _ts(state.created_at)
+    last = _ts(state.transcript[-1].ts) if state.transcript else start
+    return round((last - start).total_seconds()) if start and last else None
+
+
 @app.get("/api/sessions")
 def list_sessions():
     """Every session this deployment knows about, live or on disk.
@@ -299,6 +341,11 @@ def list_sessions():
     Deliberately a summary per session, not full state: the board should
     stay cheap to open when there are a thousand rows, and anything a
     reviewer needs beyond this is one click away in the export."""
+    # Balance the books before reporting them. Sessions whose caller closed
+    # the window have nothing left running to close them — see
+    # session/sweeper.py for why this is lazy rather than a background timer.
+    sweep(STORE, _get_spec)
+
     rows = []
     skipped_empty = 0
     for sid in STORE.list_sessions():
@@ -322,6 +369,16 @@ def list_sessions():
             "created_at": st.created_at,
             "last_activity_at": last_ts,
             "turns_used": st.facts.turns_used,
+            # Two durations, because they answer different questions and the
+            # difference between them is our latency plus the caller's
+            # patience, not their engagement. `talk_time_s` is first caller
+            # message to last caller message — the part of the call the
+            # caller was actually in. `span_s` runs to the close, which for
+            # an abandoned session includes the whole idle ceiling and would
+            # wreck an average handle time if reported as the same thing.
+            "talk_time_s": _talk_time_s(st),
+            "span_s": _span_s(st),
+            "idle_s": round(idle_seconds(st) or 0),
             "cost_usd": round(st.facts.cost_usd, 5),
             "verified": st.facts.is_verified(),
             "caller_role": st.facts.caller_role.value,
@@ -402,12 +459,25 @@ def post_message(session_id: str, req: MessageRequest):
         STORE.update(result.state)
         STORE.append_trace(session_id, result.trace_event)
 
+        # Progressive reveal of an ALREADY-GENERATED reply. Nothing is
+        # emitted until the guard has passed (§7.11's no-retraction rule), so
+        # this is a presentation effect, not real token streaming.
+        #
+        # It used to sleep a flat 20ms per word, which quietly made the
+        # effect a LATENCY TAX proportional to reply length: a 113-word
+        # answer spent 2.3s dribbling out text the server already had, on top
+        # of the real 6.6s it took to produce. The longest replies — the ones
+        # the caller is already waiting hardest for — were penalised most.
+        #
+        # The budget is now fixed, so reveal time is constant regardless of
+        # length and long replies simply reveal faster.
         words = result.reply.split(" ")
+        per_word = min(0.02, REVEAL_BUDGET_S / max(len(words), 1))
         buffer = ""
-        for i, w in enumerate(words):
+        for w in words:
             buffer += (" " if buffer else "") + w
             yield f"event: token\ndata: {json.dumps({'text': buffer})}\n\n"
-            time.sleep(0.02)
+            time.sleep(per_word)
 
         done_payload = {"reply": result.reply, "state": serialize_state(result.state, spec, domain), "trace_event": result.trace_event}
         yield f"event: done\ndata: {json.dumps(done_payload, default=str)}\n\n"

@@ -30,8 +30,7 @@
   --t-base: 220ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* ---- dark (default) ---- */
-:root,
+/* ---- dark ---- */
 :root[data-theme="dark"] {
   --bg:          #0b0d12;
   --bg-sunken:   #080a0e;
@@ -60,7 +59,11 @@
   color-scheme: dark;
 }
 
-/* ---- light ---- */
+/* ---- light (default) ----
+   The bare :root carries the light palette so the very first paint, before
+   any JavaScript has run, is already the default theme. When dark was the
+   bare default, a light-mode visitor got a dark flash on every load. */
+:root,
 :root[data-theme="light"] {
   --bg:          #f7f8fa;
   --bg-sunken:   #eef0f4;
@@ -572,3 +575,19 @@ details.dev pre {
 /* The session the tester is actually in, so the board never leaves them
    hunting for their own conversation among the others. */
 .ops-card.current { outline: 1.5px solid var(--accent); outline-offset: 1px; }
+
+/* ---- per-turn latency breakdown ----------------------------------------- */
+.latency { margin-top: var(--s3); }
+.latency-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 5px; }
+.latency-total { font-size: 0.8rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.latency-bar { display: flex; height: 6px; border-radius: var(--r-full); overflow: hidden;
+  background: var(--bg-sunken); }
+.latency-bar > span { display: block; }
+.lat-perceive { background: var(--accent); }
+.lat-act      { background: var(--open); }
+.lat-verify   { background: var(--locked); }
+.latency-legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px;
+  font-size: 0.72rem; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.latency-legend i { display: inline-block; width: 7px; height: 7px; border-radius: 2px;
+  margin-right: 4px; vertical-align: middle; }
+.latency-words { margin-left: auto; color: var(--text-faint); }

@@ -5,6 +5,20 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SOP Harness — Insurance Claims Demo</title>
+      <script>
+      // Resolve the theme before first paint. React sets the same attribute
+      // on mount, but that is one render too late to avoid a flash, and the
+      // flash is the whole problem.
+      (function () {
+        try {
+          var saved = localStorage.getItem("sop-theme");
+          if (saved !== "dark" && saved !== "light") {
+            saved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+          }
+          document.documentElement.setAttribute("data-theme", saved);
+        } catch (e) { /* private mode: the CSS default (light) stands */ }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -260,6 +260,52 @@ function EvidenceCard({ memory }) {
   );
 }
 
+/** Where this turn's wall-clock time actually went.
+ *
+ *  Cost was visible here and latency was not, so "why did that feel slow?"
+ *  had no answer in the product — the only way to find out was to guess. The
+ *  stages are shown separately because they have different fixes: PERCEIVE
+ *  is prompt size, ACT is model tier and reply length, and VERIFY being
+ *  non-zero means the guard sent a draft back and paid for a second call. */
+function LatencyBar({ latency }) {
+  if (!latency) return null;
+  const parts = [
+    { key: "perceive", label: "read", cls: "lat-perceive" },
+    { key: "act", label: "write", cls: "lat-act" },
+    { key: "verify", label: "check", cls: "lat-verify" },
+  ].filter((p) => (latency[p.key] ?? 0) > 0.01);
+  const total = latency.total || 0.001;
+
+  return (
+    <div className="latency">
+      <div className="latency-head">
+        <span className="evidence-key">Time on this turn</span>
+        <span className="latency-total">{total.toFixed(1)}s</span>
+      </div>
+      <div className="latency-bar">
+        {parts.map((p) => (
+          <span
+            key={p.key}
+            className={p.cls}
+            style={{ width: `${((latency[p.key] / total) * 100).toFixed(1)}%` }}
+            title={`${p.label} — ${latency[p.key].toFixed(2)}s`}
+          />
+        ))}
+      </div>
+      <div className="latency-legend">
+        {parts.map((p) => (
+          <span key={p.key}>
+            <i className={p.cls} /> {p.label} {latency[p.key].toFixed(1)}s
+          </span>
+        ))}
+        {latency.reply_words != null && (
+          <span className="latency-words">{latency.reply_words} words</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function TurnCard({ trace }) {
   if (!trace) return null;
   const attempts = trace.guard_attempts || [];
@@ -287,6 +333,8 @@ function TurnCard({ trace }) {
         .flatMap((a, i) => a.violations.map((v, j) => (
           <div className="verdict-detail" key={`${i}-${j}`}>· {v}</div>
         )))}
+
+      <LatencyBar latency={trace.latency_s} />
 
       {trace.plan.directives?.length > 0 && (
         <div style={{ marginTop: 12 }}>

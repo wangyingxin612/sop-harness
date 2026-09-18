@@ -9,13 +9,15 @@ and *before* the turn is emitted.
 """
 from __future__ import annotations
 
+import time
+
 from dataclasses import dataclass, field
 
 from app.llm.extraction import perceive_blocking
 from app.llm.generation import act
 from app.llm.provider import LLMProvider
 from app.sop.domain import DomainContext
-from app.sop.machine import decide
+from app.sop.machine import decide, settle_phase
 from app.sop.spec import SopSpec
 from app.sop.types import Phase, SessionState, Turn
 from app.tools.effects import execute_tool_call, load_consent_scenarios
@@ -81,17 +83,28 @@ def run_turn(
     from app.guards.output_guard import check_reply
 
     turn_index = state.next_turn_index()
+    # Per-stage wall clock. Cost was already recorded here and latency was
+    # not, which made "why did that turn feel slow?" a question the system
+    # could not answer about itself — the only available response was to
+    # guess. Latency is the half of the user's experience that cost does not
+    # describe, and the stages have very different fixes: a slow PERCEIVE is
+    # a prompt-size problem, a slow ACT is a tier/verbosity problem, and a
+    # slow GUARD means the model needed a second attempt.
+    t0 = time.perf_counter()
 
     # 1. PERCEIVE (blocking)
     perceive_result = perceive_blocking(state, user_message, provider, turn_index)
     signals = perceive_result.signals
+    t_perceive = time.perf_counter()
 
     # 2. DECIDE
     new_state, plan = decide(state, signals, domain, spec)
+    t_decide = time.perf_counter()
 
     # 3. ACT
     tool_schemas = tools_for_names(plan.allowed_tools)
     act_output = act(new_state, plan, spec, provider, user_message, tool_schemas)
+    t_act = time.perf_counter()
 
     # 4. VERIFY — guard, with one repair attempt, then a safe template.
     # An empty reply (the model called a tool and said nothing — observed in
@@ -130,6 +143,10 @@ def run_turn(
         if result:
             tool_effects.append(result)
 
+    # A tool effect can satisfy a terminal condition that was not yet true
+    # when transition() ran (sending the summary is the case that matters).
+    settle_phase(new_state)
+
     # deferred perception -> memory, for the NEXT turn
     _fold_memory_updates(new_state, act_output.memory_updates, turn_index)
 
@@ -158,6 +175,18 @@ def run_turn(
             "case_hint": _hint_for_trace(act_output.memory_updates.case_hint),
             "intent": act_output.memory_updates.intent,
             "internal_note": act_output.memory_updates.internal_note,
+        },
+        "latency_s": {
+            "perceive": round(t_perceive - t0, 3),
+            "decide": round(t_decide - t_perceive, 3),
+            "act": round(t_act - t_decide, 3),
+            # Guard time includes any repair attempt, which is where a
+            # surprising number comes from: a repair is a whole extra model
+            # call, and it is invisible in the reply the caller eventually
+            # sees.
+            "verify": round(time.perf_counter() - t_act, 3),
+            "total": round(time.perf_counter() - t0, 3),
+            "reply_words": len(act_output.reply.split()),
         },
         "cost": {
             "perceive_input_tokens": perceive_result.input_tokens,

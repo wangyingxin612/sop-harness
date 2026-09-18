@@ -996,6 +996,78 @@ metric is a way of guessing, and this one guessed wrong.
 
 ---
 
+### 7.15 Where a turn's time goes, and what the caller is owed at the end
+
+**Latency was unmeasured.** The trace recorded cost per turn and not time, so "why did that feel
+slow?" was a question the system could not answer about itself. Each turn now records `perceive` /
+`act` / `verify` wall clock, shown in the Inspector, because the three have different fixes: PERCEIVE
+is prompt size, ACT is model tier and reply length, and a non-zero VERIFY means the guard rejected a
+draft and paid for a second model call.
+
+The first thing measuring found was self-inflicted. The progressive reveal slept a flat 20 ms per
+word, which made a presentation effect into a **latency tax proportional to reply length** — a
+113-word answer spent 2.3 s dribbling out text the server already had. The longest replies, the ones
+a caller is already waiting hardest for, were penalised most. The budget is now fixed (0.6 s total),
+so long replies simply reveal faster.
+
+What remains is real and structural: PERCEIVE and ACT are two sequential model calls, and DECIDE
+depends on PERCEIVE, so they cannot be parallelised without giving up the property that makes the
+whole design work — the plan is computed before generation, not repaired afterwards. This is the
+honest cost of the architecture, and §7.11's deferred-perception split already pays part of it down.
+
+**"That's it, thanks" was being forgotten.** The wrap-up signal was read off the current turn only:
+it moved the call into POST_PROCESS and was then discarded. The caller was offered a summary,
+answered, and was asked *again* whether they needed anything else — having already said twice that
+they did not. `wrap_up_signalled` is now sticky. Intent the caller has expressed does not stop being
+true because a phase boundary happened, and when it is on file the agent sends the summary and closes
+in the same turn.
+
+That required `settle_phase()`: the email is sent by a tool during ACT, long after `transition()` ran,
+so the terminal guard has to be re-checked once this turn's effects have landed. It is a state machine
+re-testing its own guard after an action mutated state — narrow, deterministic, and only able to move
+a session to CLOSED on a condition `transition()` would already have accepted.
+
+**A latent bug this exposed.** `just_approved` compared the consent event's turn index against
+`next_turn_index() - 1`, but `resolve()` runs *before* the caller's turn is appended, so the index was
+already current. The condition had never once been true: `SEND_NOW` never fired, and the summary email
+was going out only because the model volunteered the tool call from `pending_action` in
+`visible_facts`. It worked nearly every time, which is exactly why it went unnoticed — a deterministic
+instruction had quietly degraded into a hope. The test covering it had hand-built its fixture with the
+same `- 1`, so it passed throughout; it now drives the real `transition()` path instead, because a test
+that constructs its input the way the buggy code reads it cannot catch the bug.
+
+### 7.16 When the caller just closes the window
+
+The idle ladder lives in the browser, which is correct — only the browser knows whether the tab is
+visible or whether someone is mid-sentence. But it means that when the caller closes the window, the
+thing that was going to close the session goes with it. Every abandoned conversation would sit in
+whatever phase it reached, forever, inflating the in-flight column and never entering the containment
+denominator.
+
+So the browser owns the polite part (check in, warn, close while someone is watching) and the server
+owns the **backstop**: a session with no caller activity past its SOP's ceiling is closed regardless of
+whether anyone is still connected. It is lazy rather than scheduled — the deployment scales to zero, so
+a background timer would be asleep exactly when sessions go stale, whereas sweeping on read balances
+the books the moment anyone looks at them.
+
+Two details that are easy to get wrong:
+
+- **The clock runs on caller activity, not on any activity.** The agent always speaks last, so a
+  session whose clock reset on the agent's reply would never go stale at all.
+- **A closed window is evidence, not a verdict.** `pagehide` also fires on a refresh or a navigation,
+  so the browser's report is recorded on the session and only becomes `ABANDONED_WINDOW_CLOSED` if the
+  session then stays silent past its ceiling. It is kept distinct from `ABANDONED_AFTER_SILENCE` on
+  purpose: someone who closed the tab decided to leave, someone who went quiet may be on hold with
+  their clinic, and the fix for one is not the fix for the other.
+
+**Two durations, because they answer different questions.** `talk_time_s` is first caller message to
+last caller message — the part of the call the caller was actually in, and the number that belongs in
+an average handle time. `span_s` runs to the close and includes the trailing silence. Reporting the
+second as the first would mean an abandoned call logged fifteen minutes of "handling" in which nothing
+happened, and the metric would get *worse* every time the bot was made more patient.
+
+---
+
 ---
 
 ## 8. Beyond the brief: what we would build as the product owner

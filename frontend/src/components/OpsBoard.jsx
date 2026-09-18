@@ -47,6 +47,12 @@ function relative(iso) {
   return `${Math.round(secs / 86400)}d ago`;
 }
 
+function fmtDuration(secs) {
+  if (secs == null) return "—";
+  if (secs < 60) return `${secs}s`;
+  return `${Math.floor(secs / 60)}m${String(secs % 60).padStart(2, "0")}s`;
+}
+
 function Card({ row, current }) {
   const d = row.disposition;
   return (
@@ -75,7 +81,12 @@ function Card({ row, current }) {
       </div>
 
       <div className="ops-card-foot">
-        <span>{row.turns_used} turns · ${row.cost_usd.toFixed(4)}</span>
+        {/* talk time, not span: span runs to the close, which for an
+            abandoned call includes the whole idle ceiling and would report
+            fifteen minutes of "handling" in which nothing happened. */}
+        <span title={`${row.span_s}s from open to last activity, incl. any silence`}>
+          {row.turns_used} turns · {fmtDuration(row.talk_time_s)} · ${row.cost_usd.toFixed(4)}
+        </span>
         <a href={exportUrl(row.session_id)} target="_blank" rel="noreferrer">transcript</a>
       </div>
     </div>

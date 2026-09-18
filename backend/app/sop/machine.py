@@ -252,9 +252,31 @@ def _post_process_phase_transition(state: SessionState, signals: TurnSignals) ->
             facts.pending_action = None
             facts.email_skipped = True
 
-    if signals.wrap_up_request and (facts.email_sent or facts.email_skipped):
+    if facts.wrap_up_signalled and (facts.email_sent or facts.email_skipped):
         return Phase.CLOSED
     return Phase.POST_PROCESS
+
+
+def settle_phase(state: SessionState) -> None:
+    """Re-evaluate terminal conditions AFTER this turn's tool effects landed.
+
+    transition() runs before ACT, so on the turn the caller says "yes, send
+    it" the email has not been sent yet — `email_sent` only becomes true when
+    the tool executes, several steps later. Without this, the phase could not
+    reach CLOSED until the NEXT caller turn, which is precisely the extra
+    round trip this whole change exists to remove: the caller would get a
+    warm sign-off and then be left sitting in an open conversation.
+
+    Deliberately narrow and deterministic — a state machine re-checking its
+    own guard after an action mutated state, not a second opinion about what
+    should happen. It can only move a session to CLOSED, and only on a
+    condition transition() would already have accepted.
+    """
+    facts = state.facts
+    if state.phase != Phase.POST_PROCESS:
+        return
+    if facts.wrap_up_signalled and (facts.email_sent or facts.email_skipped):
+        state.phase = Phase.CLOSED
 
 
 def transition(state: SessionState, signals: TurnSignals, domain: DomainContext, spec: SopSpec) -> SessionState:
@@ -266,6 +288,11 @@ def transition(state: SessionState, signals: TurnSignals, domain: DomainContext,
     _record_deferred_signals(new_state, signals)
     _apply_emotion_and_abuse_counters(new_state, signals, spec)
     poll_pending_consent(new_state, domain)
+    # Sticky: see SessionFacts.wrap_up_signalled. Recorded once, here, so
+    # every phase reads the same fact rather than each one re-deriving it
+    # from whichever turn happens to be current.
+    if signals.wrap_up_request:
+        new_state.facts.wrap_up_signalled = True
 
     phase = new_state.phase
     facts = new_state.facts
