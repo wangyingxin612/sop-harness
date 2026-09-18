@@ -60,6 +60,11 @@ class LLMProvider:
         self.settings = settings
 
     def model_for(self, tier: Tier) -> str:
+        override = self.settings.tier_override
+        if override == "strong":
+            return self.settings.model_strong
+        if override == "fast":
+            return self.settings.model_fast
         return self.settings.model_strong if tier == Tier.STRONG else self.settings.model_fast
 
     def call(

@@ -303,6 +303,25 @@ def resolve(state: SessionState, domain: DomainContext, spec: SopSpec) -> TurnPl
                 }
             else:
                 visible_facts = {"claim": full_claim, "guidance": _gather_guidance(domain, claim)}
+
+        if facts.caller_role == CallerRole.REPRESENTATIVE:
+            # Consent status has to be a GROUNDED fact, not something the model
+            # infers from a tool acknowledgement. Without it in visible_facts
+            # the model had nothing to check itself against — and in the
+            # timeout scenario it told the caller consent had been approved
+            # when it never was. Putting it here also makes the claim
+            # checkable: the grounding guard can now see the real value.
+            visible_facts["consent"] = {
+                "status": facts.consent_status.value,
+                "times_checked": facts.consent_poll_count,
+                "meaning": {
+                    "not_requested": "no request has been opened yet",
+                    "pending": "requested, still waiting — it has NOT been approved",
+                    "approved": "granted; full detail may be shared",
+                    "timed_out": "no response after repeated checks; it has NOT been approved",
+                    "declined": "explicitly refused",
+                }[facts.consent_status.value],
+            }
         if facts.caller_role == CallerRole.REPRESENTATIVE:
             directives.append(REPRESENTATIVE_SCOPE_NOTE)
         # "a farewell or sign-off": closing the call is POST_PROCESS's job, and

@@ -374,3 +374,28 @@ class TestConsentAutoPolling:
         state.facts.consent_status = ConsentStatus.APPROVED
         state = transition(state, verify_signals(), domain, spec)
         assert state.facts.consent_status == ConsentStatus.APPROVED
+
+
+def test_representative_lookup_survives_asr_noise(domain, spec):
+    """"David Chen" arrives as "david chan" through a speech recognizer. The
+    representative table needs the same phonetic tolerance as the
+    policyholder table — without it the caller was silently downgraded to a
+    policyholder and the whole representative flow was lost."""
+    state = make_state()
+    state = transition(
+        state,
+        verify_signals(
+            claims_representative=True,
+            representative_name="david chan",
+            identity_candidates={
+                "full_name": "margret chan",
+                "dob": "march fifteenth nineteen eighty-five",
+                "id_last4": "four four seven two",
+            },
+        ),
+        domain,
+        spec,
+    )
+    assert state.facts.caller_role.value == "representative"
+    assert state.facts.representative_of_party_id == "P9"
+    assert state.facts.verification_status == VerificationStatus.VERIFIED

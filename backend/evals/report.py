@@ -72,6 +72,7 @@ def write_report(results, out_path: str | Path) -> None:
                 "id": r.scenario.id,
                 "description": r.scenario.description,
                 "tags": r.scenario.tags,
+                "noise_profile": r.noise_profile,
                 "passed": r.passed,
                 "error": r.error,
                 "invariant_violations": r.invariant_violations,
@@ -81,6 +82,7 @@ def write_report(results, out_path: str | Path) -> None:
                 "turns": [
                     {
                         "user": o.turn.user,
+                        "sent_text": o.sent_text,
                         "reply": o.reply,
                         "phase_after": o.phase_after,
                         "route": o.route,

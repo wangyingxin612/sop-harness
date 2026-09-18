@@ -332,3 +332,58 @@ class TestPostProcessCloseOut:
         state = self._post_process_state(domain, spec, sent=True)
         state, plan = decide(state, signals(wrap_up_request=True, raw_message="no that's all, thanks"), domain, spec)
         assert plan.phase == Phase.CLOSED
+
+
+class TestConsentIsGrounded:
+    """Regression for a fabricated-state bug: in the `timeout` scenario the
+    agent told a representative that consent had been APPROVED when it never
+    was. Root cause was that consent status wasn't in visible_facts at all —
+    the model had nothing to check itself against, and the grounding guard
+    had nothing to catch it with. A fact the agent is expected to state must
+    be a fact the agent was given."""
+
+    def _rep_in_process_case(self, domain, spec, status):
+        from app.sop.types import CallerRole, ConsentStatus
+
+        state = make_state(phase=Phase.PROCESS_CASE)
+        state.facts.caller_role = CallerRole.REPRESENTATIVE
+        state.facts.verified_party_id = "P9"
+        state.facts.representative_of_party_id = "P9"
+        state.memory.confirmed_case_id = "CL-2048"
+        state.facts.consent_status = ConsentStatus(status)
+        return state
+
+    def test_pending_consent_is_visible_and_says_it_is_not_approved(self, domain, spec):
+        state = self._rep_in_process_case(domain, spec, "pending")
+        state, plan = decide(state, signals(), domain, spec)
+        consent = plan.visible_facts["consent"]
+        assert consent["status"] == "pending"
+        assert "NOT been approved" in consent["meaning"]
+
+    def test_timed_out_consent_is_visible_and_says_it_is_not_approved(self, domain, spec):
+        state = self._rep_in_process_case(domain, spec, "timed_out")
+        state, plan = decide(state, signals(), domain, spec)
+        assert plan.visible_facts["consent"]["status"] == "timed_out"
+        assert "NOT been approved" in plan.visible_facts["consent"]["meaning"]
+
+    def test_approved_consent_unlocks_full_detail(self, domain, spec):
+        state = self._rep_in_process_case(domain, spec, "approved")
+        state, plan = decide(state, signals(), domain, spec)
+        assert plan.visible_facts["consent"]["status"] == "approved"
+        assert plan.visible_facts["claim"]["denial_reason"] is not None   # reduced scope lifted
+
+    def test_pending_consent_still_withholds_the_narrative(self, domain, spec):
+        state = self._rep_in_process_case(domain, spec, "pending")
+        state, plan = decide(state, signals(), domain, spec)
+        assert "denial_reason" not in plan.visible_facts["claim"]
+        assert "allowed_max_amount" not in plan.visible_facts["claim"]
+
+    def test_direct_policyholder_gets_no_consent_block(self, domain, spec):
+        """Consent is a representative concept — showing it to a policyholder
+        would be noise, and noise in visible_facts is something the model can
+        misread."""
+        state = make_state(phase=Phase.PROCESS_CASE)
+        state.facts.verified_party_id = "P9"
+        state.memory.confirmed_case_id = "CL-2048"
+        state, plan = decide(state, signals(), domain, spec)
+        assert "consent" not in plan.visible_facts

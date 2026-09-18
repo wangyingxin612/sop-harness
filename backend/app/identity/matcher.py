@@ -30,6 +30,7 @@ from app.identity.normalize import (
     normalize_name,
     normalize_phone,
 )
+from app.identity.phonetic import names_sound_alike
 from app.identity.records import PolicyholderRecord
 
 IDENTITY_FACTOR_TYPES = ("full_name", "dob", "phone", "email", "id_last4")
@@ -42,6 +43,15 @@ class FactorOutcome(str, Enum):
     MATCHED = "matched"
     MISMATCHED = "mismatched"
     UNPARSEABLE = "unparseable"   # e.g. a DOB we couldn't parse at all
+
+
+class MatchTier(str, Enum):
+    """How a factor matched. Recorded rather than flattened, so the audit
+    trail and the inspector can show honestly that a name matched by sound
+    rather than exactly (DESIGN.md §7.2, app/identity/phonetic.py)."""
+
+    EXACT = "exact"
+    PHONETIC = "phonetic"
 
 
 _NORMALIZERS = {
@@ -69,13 +79,30 @@ def _record_values(record: PolicyholderRecord, factor_type: str) -> tuple[str, .
 
 def records_matching_factor(
     records: list[PolicyholderRecord], factor_type: str, raw_value: str
-) -> list[PolicyholderRecord]:
-    """All records (in the whole book) whose `factor_type` matches `raw_value`."""
+) -> tuple[list[PolicyholderRecord], MatchTier]:
+    """All records (in the whole book) whose `factor_type` matches
+    `raw_value`, plus HOW they matched.
+
+    Exact matching is tried first and always wins. Phonetic fallback applies
+    to `full_name` ONLY — never to DOB, phone, email or the ID last-four,
+    which stay exact because they are the high-entropy factors. See
+    app/identity/phonetic.py for why loosening the name specifically is safe
+    (short version: a name was never the secret, and verification still
+    requires two other exact factors)."""
     normalize = _NORMALIZERS[factor_type]
     normalized = normalize(raw_value)
     if not normalized:
-        return []
-    return [r for r in records if normalized in _record_values(r, factor_type)]
+        return [], MatchTier.EXACT
+
+    exact = [r for r in records if normalized in _record_values(r, factor_type)]
+    if exact or factor_type != "full_name":
+        return exact, MatchTier.EXACT
+
+    phonetic = [
+        r for r in records
+        if any(names_sound_alike(normalized, candidate) for candidate in _record_values(r, "full_name"))
+    ]
+    return phonetic, MatchTier.PHONETIC
 
 
 @dataclass
@@ -85,6 +112,7 @@ class FactorApplication:
     outcome: FactorOutcome
     candidates_before: list[str]
     candidates_after: list[str]
+    tier: MatchTier = MatchTier.EXACT
 
 
 @dataclass
@@ -137,7 +165,7 @@ def apply_factor(
     if state.is_locked:
         return state
 
-    matching = records_matching_factor(records, factor_type, raw_value)
+    matching, tier = records_matching_factor(records, factor_type, raw_value)
     matching_ids = {r.party_id for r in matching}
 
     current_candidates = set(state.candidate_party_ids) if state.is_narrowed else None
@@ -181,6 +209,7 @@ def apply_factor(
                 outcome=outcome,
                 candidates_before=candidates_before,
                 candidates_after=list(new_candidates),
+                tier=tier if outcome == FactorOutcome.MATCHED else MatchTier.EXACT,
             ),
         ],
     )
@@ -196,6 +225,14 @@ def apply_factors(
         if factor_type in factors and factors[factor_type]:
             state = apply_factor(state, records, factor_type, factors[factor_type])
     return state
+
+
+def phonetic_match_used(state: "MatchState") -> bool:
+    """Whether any accepted factor matched by sound. Surfaced in the audit
+    trail and the handoff packet so a reviewer never has to guess."""
+    return any(
+        h.outcome == FactorOutcome.MATCHED and h.tier == MatchTier.PHONETIC for h in state.history
+    )
 
 
 def lookup_candidates_by_policy_number(

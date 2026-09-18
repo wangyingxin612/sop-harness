@@ -80,6 +80,45 @@ def normalize_email(raw: str) -> str:
     return (raw or "").strip().lower()
 
 
+_TENS_WORDS = {
+    "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50,
+    "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90,
+}
+_UNIT_WORDS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+    "six": 6, "seven": 7, "eight": 8, "nine": 9,
+}
+
+
+def _spoken_years_to_digits(s: str) -> str:
+    """"nineteen eighty-five" -> "1985"; "eighty-five" -> "85".
+
+    Spoken dates are the single most common thing a speech recognizer hands
+    a text pipeline in a form exact matching can't use. Found by the
+    ASR-noise suite locking out a legitimate caller whose date of birth
+    arrived as "march fifteenth nineteen eighty-five" (evals/asr_noise.py).
+    Pure parsing — it makes a real date recognizable, it does not make a
+    wrong one acceptable.
+    """
+    def tens_unit(m: re.Match) -> str:
+        tens = _TENS_WORDS[m.group(1).lower()]
+        unit = _UNIT_WORDS.get((m.group(2) or "").lower().lstrip("- "), 0)
+        return str(tens + unit)
+
+    tens_pattern = r"\b(" + "|".join(_TENS_WORDS) + r")(?:[-\s]+(" + "|".join(_UNIT_WORDS) + r"))?\b"
+    # "nineteen <tens-unit>" / "twenty <tens-unit>" -> a 4-digit year
+    s = re.sub(
+        r"\b(nineteen|twenty)\s+" + tens_pattern,
+        lambda m: ("19" if m.group(1).lower() == "nineteen" else "20")
+        + f"{_TENS_WORDS[m.group(2).lower()] + _UNIT_WORDS.get((m.group(3) or '').lower().lstrip('- '), 0):02d}",
+        s,
+        flags=re.IGNORECASE,
+    )
+    # A bare "eighty-five" (as in "March 15th of eighty-five")
+    s = re.sub(tens_pattern, tens_unit, s, flags=re.IGNORECASE)
+    return s
+
+
 def _replace_ordinal_words(s: str) -> str:
     pattern = r"\b(" + "|".join(re.escape(w) for w in _ORDINAL_WORDS) + r")\b"
 
@@ -94,7 +133,7 @@ def normalize_dob(raw: str) -> str | None:
     must treat that as 'no match', never as a wildcard."""
     if not raw or not raw.strip():
         return None
-    cleaned = _replace_ordinal_words(raw)
+    cleaned = _spoken_years_to_digits(_replace_ordinal_words(raw))
     try:
         dt = _dateutil_parser.parse(cleaned, fuzzy=True, default=datetime(1900, 1, 1))
     except (ValueError, OverflowError, TypeError):

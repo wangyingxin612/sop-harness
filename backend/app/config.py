@@ -28,6 +28,10 @@ class Settings:
     model_fast: str
     demo_now: str
     llm_base_url: str | None = None
+    # Forces every call to one tier regardless of what the TurnPlan asked
+    # for. Used by the cost experiment (evals/cost_experiment.py) to measure
+    # what per-phase routing actually buys; never set in normal operation.
+    tier_override: str | None = None
 
 
 def load_settings() -> Settings:
@@ -37,4 +41,5 @@ def load_settings() -> Settings:
         model_fast=os.environ.get("MODEL_FAST", "claude-haiku-4-5-20251001"),
         demo_now=os.environ.get("DEMO_NOW", "2026-02-20"),
         llm_base_url=os.environ.get("LLM_BASE_URL"),
+        tier_override=os.environ.get("TIER_OVERRIDE") or None,
     )

@@ -67,6 +67,36 @@ def _parse_record_signals(tool_input: dict, turn_index: int, raw_message: str) -
     )
 
 
+def _tool_ack(tool_name: str, state: SessionState) -> str:
+    """What to tell the model a tool call did, when we're completing the
+    tool-use exchange before the side effect has actually run.
+
+    This must be SPECIFIC. A generic "accepted" was read by the model as
+    "the consent was granted", and it told a caller their mother had
+    approved disclosure in the scenario where she never does — a fabricated
+    claim about case state, caused by an ambiguous acknowledgement I
+    introduced with the continuation fix. Found by the ASR-noise run, which
+    had nothing to do with ASR: adversarial variation surfaces unrelated
+    defects, which is most of why it's worth running.
+    """
+    if tool_name == "record_signals":
+        return "recorded"
+    if tool_name == "request_consent":
+        status = state.facts.consent_status.value
+        return (
+            f"A consent request is open. Its status is currently '{status}'. "
+            "Describe it to the caller as exactly this status — do NOT say it has been approved "
+            "unless the status is 'approved'."
+        )
+    if tool_name == "send_summary_email":
+        return "Queued for sending to the address on file. You may say it is on its way."
+    if tool_name == "create_followup":
+        return "The note has been attached to the claim file."
+    if tool_name == "transfer_to_human":
+        return "The transfer has been initiated."
+    return "accepted"
+
+
 def act(
     state: SessionState,
     plan: TurnPlan,
@@ -139,11 +169,7 @@ def act(
                         {
                             "type": "tool_result",
                             "tool_use_id": c["id"],
-                            "content": (
-                                "recorded"
-                                if c["name"] == "record_signals"
-                                else "accepted — it will be carried out as you describe it"
-                            ),
+                            "content": _tool_ack(c["name"], state),
                         }
                         for c in result.tool_calls
                     ],

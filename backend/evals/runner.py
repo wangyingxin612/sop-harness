@@ -25,12 +25,14 @@ from app.sop.spec import SopSpec, load_spec  # noqa: E402
 from app.sop.types import SessionState  # noqa: E402
 from app.session.orchestrator import run_turn  # noqa: E402
 from evals.invariants import run_invariants  # noqa: E402
+from evals.asr_noise import apply_noise  # noqa: E402
 from evals.scenario import Scenario, TurnSpec, load_all_scenarios  # noqa: E402
 
 
 @dataclass
 class TurnOutcome:
     turn: TurnSpec
+    sent_text: str          # what was actually sent (differs from turn.user under noise)
     reply: str
     phase_after: str
     route: str
@@ -47,6 +49,7 @@ class TurnOutcome:
 @dataclass
 class ScenarioResult:
     scenario: Scenario
+    noise_profile: str | None = None
     turn_outcomes: list[TurnOutcome] = field(default_factory=list)
     invariant_violations: dict[str, list[str]] = field(default_factory=dict)
     final_assertion_failures: list[str] = field(default_factory=list)
@@ -84,15 +87,25 @@ def _check_final(scenario: Scenario, state: SessionState) -> list[str]:
 
 
 def run_scenario(
-    scenario: Scenario, domain: DomainContext, spec: SopSpec, provider: LLMProvider, consent_path: str
+    scenario: Scenario,
+    domain: DomainContext,
+    spec: SopSpec,
+    provider: LLMProvider,
+    consent_path: str,
+    noise_profile: str | None = None,
 ) -> ScenarioResult:
-    result = ScenarioResult(scenario=scenario)
+    """`noise_profile` re-runs the SAME scenario with ASR-corrupted inputs
+    (evals/asr_noise.py). Same assertions, harder input — which is the whole
+    point: a robustness suite that needed its own expectations wouldn't be
+    measuring robustness, it would be measuring a different product."""
+    result = ScenarioResult(scenario=scenario, noise_profile=noise_profile)
     state = SessionState(session_id=f"eval-{scenario.id}", sop_name=spec.name, consent_scenario=scenario.consent_scenario)
     events = []
     start = time.monotonic()
     try:
-        for turn in scenario.turns:
-            r = run_turn(state, turn.user, domain, spec, provider, consent_path)
+        for i, turn in enumerate(scenario.turns):
+            user_text = apply_noise(turn.user, noise_profile, seed=i) if noise_profile else turn.user
+            r = run_turn(state, user_text, domain, spec, provider, consent_path)
             state = r.state
             events.append(r.trace_event)
             phase_ok = turn.expect_phase is None or state.phase.value == turn.expect_phase
@@ -100,7 +113,7 @@ def run_scenario(
             attempts = r.trace_event.get("guard_attempts", [])
             result.turn_outcomes.append(
                 TurnOutcome(
-                    turn=turn, reply=r.reply, phase_after=state.phase.value,
+                    turn=turn, sent_text=user_text, reply=r.reply, phase_after=state.phase.value,
                     route=r.trace_event["plan"]["route"], phase_assertion_ok=phase_ok, route_assertion_ok=route_ok,
                     guard_attempts=attempts,
                     tool_effects=r.trace_event.get("tool_effects", []),
@@ -118,7 +131,12 @@ def run_scenario(
     return result
 
 
-def run_all(scenarios_dir: str, filter_tag: str | None = None, filter_id: str | None = None) -> list[ScenarioResult]:
+def run_all(
+    scenarios_dir: str,
+    filter_tag: str | None = None,
+    filter_id: str | None = None,
+    noise_profile: str | None = None,
+) -> list[ScenarioResult]:
     settings = load_settings()
     spec = load_spec(BACKEND_DIR / "sops" / "insurance_claims.yaml")
     domain = load_domain(BACKEND_DIR / "fixtures", now=date.fromisoformat(settings.demo_now))
@@ -134,7 +152,7 @@ def run_all(scenarios_dir: str, filter_tag: str | None = None, filter_id: str | 
     results = []
     for scenario in scenarios:
         print(f"running {scenario.id}...", flush=True)
-        result = run_scenario(scenario, domain, spec, provider, consent_path)
+        result = run_scenario(scenario, domain, spec, provider, consent_path, noise_profile=noise_profile)
         status = "PASS" if result.passed else "FAIL"
         print(f"  {status}  (${result.total_cost_usd:.4f}, {result.total_latency_s:.1f}s)")
         if not result.passed:
@@ -159,9 +177,15 @@ if __name__ == "__main__":
     parser.add_argument("--tag", default=None)
     parser.add_argument("--id", default=None)
     parser.add_argument("--dir", default=str(BACKEND_DIR / "evals" / "scenarios"))
+    parser.add_argument(
+        "--noise", default=None, choices=["light", "moderate", "heavy"],
+        help="re-run the same scenarios with ASR-style corrupted input (evals/asr_noise.py)",
+    )
     args = parser.parse_args()
 
-    results = run_all(args.dir, filter_tag=args.tag, filter_id=args.id)
+    if args.noise:
+        print(f"ASR-noise profile: {args.noise}\n")
+    results = run_all(args.dir, filter_tag=args.tag, filter_id=args.id, noise_profile=args.noise)
     passed = sum(1 for r in results if r.passed)
     total_cost = sum(r.total_cost_usd for r in results)
     print(f"\n{passed}/{len(results)} scenarios passed. Total cost: ${total_cost:.4f}")
