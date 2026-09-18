@@ -61,7 +61,7 @@ def handle_request_consent(
     """INITIATES an asynchronous consent request (DESIGN.md §7.10).
 
     Deliberately does not poll: once a request is open, the state machine
-    advances it once per turn on its own (machine._auto_poll_pending_consent),
+    advances it once per turn on its own (machine.poll_pending_consent),
     because a real async approval resolves on its own schedule rather than
     when an agent decides to look. The model's only decision here is
     *whether to ask*, which is a genuine judgement call; *how often to check*

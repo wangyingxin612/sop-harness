@@ -19,3 +19,26 @@ def spec():
 @pytest.fixture()
 def domain():
     return load_domain(FIXTURES, now=DEMO_NOW)
+
+
+@pytest.fixture(autouse=True)
+def isolated_store(tmp_path, monkeypatch):
+    """Point the session store and the client-event log at a temp directory
+    for every test.
+
+    Without this, API tests write real session files into `runs/` — so the
+    operations board fills up with empty sessions nobody had, and the idle
+    metrics count them. A test suite that quietly contaminates the product's
+    own reporting is worse than one that does not run at all, because the
+    numbers still look plausible.
+    """
+    from app.obs import idle_metrics
+    from app.session.store import STORE
+
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    monkeypatch.setattr(STORE, "runs_dir", runs)
+    monkeypatch.setattr(STORE, "_sessions", {})
+    monkeypatch.setattr(STORE, "_api_keys", {})
+    monkeypatch.setattr(idle_metrics, "EVENTS_PATH", runs / "client_events.jsonl")
+    yield

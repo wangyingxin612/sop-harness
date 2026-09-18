@@ -129,7 +129,9 @@ export async function sendMessage(sessionId, message, { onToken, onDone, onError
   }
 }
 
-export async function closeSession(sessionId, reason = "caller_inactive") {
+// No default reason: the server rejects a close that doesn't say why,
+// because that string becomes the session's disposition on the ops board.
+export async function closeSession(sessionId, reason) {
   const r = await fetch(`${BASE}/sessions/${sessionId}/close?reason=${encodeURIComponent(reason)}`, {
     method: "POST",
   });
@@ -159,4 +161,16 @@ export function reportEvent(sessionId, event, payload = {}) {
   } catch {
     /* instrumentation must never surface to the caller */
   }
+}
+
+export async function pollConsent(sessionId) {
+  const r = await fetch(`${BASE}/sessions/${sessionId}/consent/poll`, { method: "POST" });
+  if (!r.ok) return null;
+  return r.json();
+}
+
+export async function listSessions() {
+  const r = await fetch(`${BASE}/sessions`);
+  if (!r.ok) throw new Error(`sessions: ${r.status}`);
+  return r.json();
 }

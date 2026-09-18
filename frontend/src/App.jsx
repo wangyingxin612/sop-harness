@@ -3,6 +3,8 @@ import Chat from "./components/Chat.jsx";
 import Inspector from "./components/Inspector.jsx";
 import { closeSession, createSession, exportUrl, listSops, sendMessage, reportEvent } from "./api.js";
 import { useIdleLadder } from "./useIdleLadder.js";
+import OpsBoard from "./components/OpsBoard.jsx";
+import { useConsentWatch } from "./useConsentWatch.js";
 
 // A caller who has already spent five turns establishing context should never
 // be told to start over. Everything below exists to honour that: the
@@ -11,6 +13,10 @@ import { useIdleLadder } from "./useIdleLadder.js";
 // silently with the history still on screen.
 
 export default function App() {
+  // "conversation" | "operations" — one deployment, two audiences: the
+  // caller-facing chat, and the board an operations lead reads.
+  const [view, setView] = useState("conversation");
+
   const [sops, setSops] = useState([]);
   const [sopName, setSopName] = useState("insurance_claims");
   const [consentScenario, setConsentScenario] = useState("default");
@@ -70,6 +76,22 @@ export default function App() {
     lastAgentText,
     onExpire: handleIdleExpire,
     onEvent: handleIdleEvent,
+  });
+
+  // Third-party consent resolves on wall-clock time, not on caller turns —
+  // see useConsentWatch.js for why that was backwards before.
+  const { checking: consentChecking } = useConsentWatch({
+    sessionId,
+    status: state?.facts?.consent_status,
+    policy: state?.consent_policy,
+    onTick: setState,
+    onResolved: (next) => {
+      setState(next);
+      // Resolving the authorisation is also activity on the caller's behalf:
+      // they have been sitting still on purpose, and nudging them the moment
+      // the answer arrives would be exactly the wrong beat.
+      resetIdle();
+    },
   });
 
   async function startSession({ silent = false, keepMessages = false } = {}) {
@@ -219,6 +241,20 @@ export default function App() {
           <button className="btn" onClick={() => setShowKeyField(true)} title="Use your own Anthropic API key for this session">Own key</button>
         )}
 
+        <nav className="view-tabs" role="tablist">
+          {["conversation", "operations"].map((v) => (
+            <button
+              key={v}
+              role="tab"
+              aria-selected={view === v}
+              className={`view-tab ${view === v ? "active" : ""}`}
+              onClick={() => setView(v)}
+            >
+              {v === "conversation" ? "Conversation" : "Operations"}
+            </button>
+          ))}
+        </nav>
+
         <div className="spacer" />
 
         {sessionId && <span className="session-tag">session {sessionId}</span>}
@@ -251,8 +287,14 @@ export default function App() {
 
       {notice && <div className="banner banner-info">{notice}</div>}
 
+      {view === "operations" ? (
+        <OpsBoard currentSessionId={sessionId} />
+      ) : (
       <div className="main-layout">
         <Chat
+          consentStatus={state?.facts?.consent_status}
+          consentPolicy={state?.consent_policy}
+          consentChecking={consentChecking}
           messages={messages}
           streamingText={streamingText}
           onSend={handleSend}
@@ -268,6 +310,7 @@ export default function App() {
         />
         <Inspector state={state} idleBudgetSeconds={budgetSeconds} />
       </div>
+      )}
     </>
   );
 }

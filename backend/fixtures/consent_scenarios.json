@@ -1,8 +1,18 @@
 {
+  "_comment": [
+    "Asynchronous third-party consent (DESIGN.md §7.10).",
+    "poll_interval_seconds compresses what would, in production, be a webhook",
+    "from the authorisation system into something observable inside a demo.",
+    "The MECHANISM under test is that consent resolves on its own schedule and",
+    "the agent observes the result — not that it takes a realistic number of",
+    "minutes."
+  ],
   "default": {
-    "status_sequence": ["pending", "approved"]
+    "status_sequence": ["pending", "approved"],
+    "poll_interval_seconds": 8
   },
   "timeout": {
-    "status_sequence": ["pending", "pending", "pending", "pending", "pending"]
+    "status_sequence": ["pending", "pending", "pending", "pending", "pending"],
+    "poll_interval_seconds": 6
   }
 }

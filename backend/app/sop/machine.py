@@ -128,9 +128,14 @@ def _identity_phase_transition(
     return Phase.VERIFY_ID
 
 
-def _auto_poll_pending_consent(state: SessionState, domain: DomainContext) -> None:
-    """Advance a pending consent request once per turn, automatically
-    (DESIGN.md §7.10).
+def poll_pending_consent(state: SessionState, domain: DomainContext) -> None:
+    """Advance a pending consent request by one step (DESIGN.md §7.10).
+
+    Called from two places: `transition()`, so a caller turn never observes
+    stale consent, and the API's wall-clock poll endpoint, so a caller who
+    says nothing at all still sees it resolve. Public (not `_`-prefixed)
+    because of the second caller — a waiting representative is exactly the
+    case this has to handle, and it cannot be served from inside a turn.
 
     Why this is NOT the model's job: a real asynchronous approval doesn't
     wait for an agent to decide it's time to check — it resolves on its own
@@ -260,7 +265,7 @@ def transition(state: SessionState, signals: TurnSignals, domain: DomainContext,
 
     _record_deferred_signals(new_state, signals)
     _apply_emotion_and_abuse_counters(new_state, signals, spec)
-    _auto_poll_pending_consent(new_state, domain)
+    poll_pending_consent(new_state, domain)
 
     phase = new_state.phase
     facts = new_state.facts

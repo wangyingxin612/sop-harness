@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { idleCopy } from "../useIdleLadder.js";
+import ConsentStrip from "./ConsentStrip.jsx";
 
 const SUGGESTIONS = [
   "I'm the policyholder. Margaret Chen, policy POL-9921, DOB 1985-03-15, SSN last four 4472. Calling about my denied healthcare claim from January.",
@@ -23,6 +24,9 @@ export default function Chat({
   sessionReady,
   turnError,
   idleLevel,
+  consentStatus,
+  consentPolicy,
+  consentChecking,
   idleSecondsUntilClose,
   terminal,
   phase,
@@ -57,6 +61,8 @@ export default function Chat({
             <div className="bubble">{m.text}</div>
           </div>
         ))}
+        <ConsentStrip status={consentStatus} policy={consentPolicy} checking={consentChecking} />
+
         {streamingText !== null && (
           <div className="msg-row agent">
             <div className="bubble streaming">{streamingText}</div>

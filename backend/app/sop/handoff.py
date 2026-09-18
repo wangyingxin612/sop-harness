@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.sop.disposition import classify
 from app.sop.domain import DomainContext
 from app.sop.types import SessionState
 
@@ -33,6 +34,7 @@ class HandoffPacket:
     off_topic_strikes: int
     consent_status: str
     recommended_next_step: str
+    disposition: dict
 
     def as_dict(self) -> dict:
         return {
@@ -50,6 +52,10 @@ class HandoffPacket:
             "off_topic_strikes": self.off_topic_strikes,
             "consent_status": self.consent_status,
             "recommended_next_step": self.recommended_next_step,
+            # The receiving human needs the routing hint before they need the
+            # narrative: which queue this belongs in decides whether they are
+            # the right person to be reading the rest of this at all.
+            "disposition": self.disposition,
         }
 
 
@@ -115,4 +121,5 @@ def build_handoff_packet(state: SessionState, domain: DomainContext) -> HandoffP
         off_topic_strikes=facts.off_topic_strikes,
         consent_status=facts.consent_status.value,
         recommended_next_step=_REASON_NEXT_STEP.get(reason, "Review the transcript and confirm the caller's need before proceeding."),
+        disposition=classify(state).as_dict(),
     )

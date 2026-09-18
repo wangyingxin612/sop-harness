@@ -766,6 +766,19 @@ representative*, then `request_consent` polls an asynchronous status sequence:
 Disclosure scope is therefore `f(caller_role, verification_level, consent_state)` — a derived value, not a
 separate state machine (§9.3).
 
+**A correction found while building the UI for this.** `poll_pending_consent` argues that a real
+asynchronous approval "resolves on its own schedule and the agent observes the result" — and then was
+only ever called from `transition()`, i.e. once per *caller turn*. A representative who asked for
+authorisation and then sat quietly, which is the single most likely thing for someone to do while
+waiting on another person, would have waited forever; the timeout branch was reachable only by typing
+filler at the agent until it gave up. Consent now also advances on wall-clock time through a poll
+endpoint that makes no model call — observing external state is control-plane work, and charging a
+caller tokens for the passage of time would be absurd. The caller sees a system strip, not an agent
+message: "still waiting on your mother's authorisation" is a fact about an external system, and the
+agent's replies should stay things the agent actually chose to say. The strip shows a bounded wait
+(*checked 1/2*), because someone waiting on another person's approval deserves to know the waiting
+ends.
+
 ### 7.11 Streaming, latency, and the no-retraction rule
 
 `PERCEIVE → ACT` is a hard dependency: gates need extracted factors, and generation needs the resulting
@@ -946,13 +959,50 @@ phases misfire, the fix is one number, not a more patient product.
 
 ---
 
+### 7.14 Disposition — the one-line outcome every call has to have
+
+Every contact centre closes every contact with a disposition code. It is the unit that operations
+reporting, QA sampling, workforce planning and the invoice all key off, and it is the first thing a
+buyer's operations team asks for. A demo that only chats cannot supply it.
+
+**It is derived, never assigned by the model.** The obvious implementation asks the model at the end
+*"how would you categorise this call?"*, which produces a plausible label and an unusable statistic:
+the taxonomy drifts, the same session classifies two ways on two runs, and nobody can defend the
+containment number to a finance team. `classify()` is a pure function of terminal state — the same
+control-plane/data-plane split as everywhere else (§4.1). The model is not consulted and cannot be
+wrong about it.
+
+**It never claims an outcome we did not observe.** There is no `RESOLVED_SATISFIED`, because nothing
+here observes satisfaction. The codes name what is observable: did the caller reach case work, did the
+SOP run to its end, who ended it and why. A taxonomy that quietly overclaims is worse than none,
+because it is the number a QA team stops checking.
+
+Codes roll up to an `outcome_class`, and **containment** — the metric §7.6 argues is the buyer's real
+economics — is `contained / (contained + transferred)`. Abandonment and abuse termination are excluded
+from *both* sides: a caller who walked away did not defeat the automation, and an abuse termination is
+a policy outcome we would not want to minimise. Folding either in gives a rate that moves for
+unrelated reasons and therefore cannot be acted on.
+
+Two codes carry a `review_flag` that is deliberately independent of the outcome class.
+`SELF_SERVED_NO_SUMMARY_DECISION` is *contained* — the call finished without a person — and also
+flagged, because R7 requires an explicit send/skip choice and this one closed without one. Collapsing
+"did it need a human" and "did it go right" into a single axis is how that failure would hide.
+
+A live run found a data-integrity bug worth recording here: the close endpoint defaulted
+`reason="caller_inactive"`, so any close that did not say why was filed as an abandonment — a
+completed call appearing on the operations board as a caller who walked away. The reason is now
+required and validated against a closed set. A default value on a field that becomes a business
+metric is a way of guessing, and this one guessed wrong.
+
+---
+
 ---
 
 ## 8. Beyond the brief: what we would build as the product owner
 
-The brief asks for a working demo. These four turn it into something an insurer's operations and
-compliance teams would actually sign off on, and each is cheap because the architecture already produces
-the underlying data.
+The brief asks for a working demo. These turn it into something an insurer's operations and compliance
+teams would actually sign off on, and each is cheap because the architecture already produces the
+underlying data. Two of them are built and running (§8.5, §8.6) rather than described.
 
 ### 8.1 Inspector — make the SOP visible
 
@@ -1020,6 +1070,36 @@ existing state machine is a thin adapter, and the reward is already there: the i
 **programmatic and verifiable**, not model-judged. The SOP is the reward specification. §12 builds on this.
 
 ---
+
+### 8.5 Operations board — the question one chat window cannot answer
+
+A single conversation demonstrates that the SOP works. An operations lead is asking something else
+entirely: *across everything that ran today, where do calls stop, and which ones need a person?*
+
+The obvious board groups sessions by status — some live, some closed, some transferred — which answers
+"what is happening", a question nobody has. The board here is a **funnel**: the SOP's own phases left
+to right, then the terminal outcomes. That version of the question implies an action. A pile-up in
+`VERIFY_ID` is an identity-data problem. A pile-up in `PROCESS_CASE` is a knowledge-base problem. A
+wide `Transferred` column is a staffing problem. Column widths are uniform and only pile height
+varies, so the shape of the board is the shape of the drop-off.
+
+Each card carries the disposition label, the routing hint, whether the caller was verified, peak
+emotional intensity, cost, and a link to the audit transcript — everything a reviewer needs to decide
+whether to open it, and nothing more. Sessions nobody ever spoke in are counted but not listed: a
+session row is created the moment someone opens the page, and listing those makes the board read as a
+wall of stalled verifications when in fact nobody said anything.
+
+### 8.6 Eval report — written for the person who signs off
+
+Nobody deploys an agent that touches protected health information on the strength of "12/12 scenarios
+passed". The person who signs off is a compliance or operations lead, and their question is narrower
+and harder: *which specific things can this system not do, and how do you know?*
+
+So the report leads with the safety invariants and the number of turns they held across — the
+falsifiable claim — and puts pass rate, cost, transcription-noise robustness and model-routing cost
+after it. Per-scenario transcripts come last and collapsed: they are evidence for a reader who doubts
+the summary, not the summary itself. It renders as a standalone page with no app shell, because the
+artifact needs to survive being emailed to someone who will never open the product.
 
 ## 9. Priorities
 

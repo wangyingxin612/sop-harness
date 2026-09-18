@@ -3,6 +3,8 @@ separate from the dataclasses themselves so app/sop/* has zero web
 dependency (DESIGN.md §5.1: the engine doesn't know an API exists)."""
 from __future__ import annotations
 
+from app.sop.disposition import classify
+from app.sop.domain import DomainContext
 from app.sop.spec import SopSpec
 from app.sop.types import SessionState, Slot
 
@@ -47,11 +49,41 @@ def _idle_policy(state: SessionState, spec: SopSpec | None) -> dict | None:
     }
 
 
-def serialize_state(state: SessionState, spec: SopSpec | None = None) -> dict:
+def _consent_policy(state: SessionState, domain: DomainContext | None) -> dict | None:
+    """How the pending authorisation will resolve, published so the client can
+    show a real wait instead of an indefinite one.
+
+    `checks_before_timeout` is the honest framing of the fixture's status
+    sequence: a caller waiting on someone else's approval deserves to know
+    there is an end to the waiting, and the agent has to be able to say what
+    happens when it arrives.
+    """
+    if domain is None:
+        return None
+    scenario = domain.consent_scenarios.get(
+        state.consent_scenario, domain.consent_scenarios.get("default", {})
+    )
+    sequence = scenario.get("status_sequence", [])
+    if not sequence:
+        return None
+    return {
+        "poll_interval_seconds": scenario.get("poll_interval_seconds", 8),
+        "checks_before_timeout": len(sequence),
+        "checks_done": state.facts.consent_poll_count,
+    }
+
+
+def serialize_state(
+    state: SessionState,
+    spec: SopSpec | None = None,
+    domain: DomainContext | None = None,
+) -> dict:
     facts = state.facts
     memory = state.memory
     return {
         "idle_policy": _idle_policy(state, spec),
+        "disposition": classify(state).as_dict(),
+        "consent_policy": _consent_policy(state, domain),
         "session_id": state.session_id,
         "sop_name": state.sop_name,
         "phase": state.phase.value,

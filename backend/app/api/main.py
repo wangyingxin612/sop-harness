@@ -20,9 +20,11 @@ from app.obs.export import render_transcript_html
 from app.obs.idle_metrics import build_report, record_event
 from app.session.orchestrator import run_turn
 from app.session.store import STORE
+from app.sop.disposition import DISPOSITIONS, classify, containment_rate
 from app.sop.domain import DomainContext, load_domain
 from app.sop.spec import SopSpec, load_spec
-from app.sop.types import Phase, SessionState
+from app.sop.machine import poll_pending_consent
+from app.sop.types import ConsentStatus, Phase, SessionState
 from app.api.schemas import serialize_state
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -150,7 +152,7 @@ def create_session(req: CreateSessionRequest):
     session_id = str(uuid.uuid4())[:8]
     state = SessionState(session_id=session_id, sop_name=req.sop_name, consent_scenario=req.consent_scenario)
     STORE.create(state, api_key=req.api_key)
-    return serialize_state(state, _get_spec(state.sop_name))
+    return serialize_state(state, _get_spec(state.sop_name), _get_domain())
 
 
 @app.get("/api/sessions/{session_id}")
@@ -158,7 +160,7 @@ def get_session(session_id: str):
     state = STORE.get(session_id)
     if state is None:
         raise HTTPException(404, "session not found")
-    return serialize_state(state, _get_spec(state.sop_name))
+    return serialize_state(state, _get_spec(state.sop_name), _get_domain())
 
 
 @app.get("/api/sessions/{session_id}/export", response_class=HTMLResponse)
@@ -169,8 +171,18 @@ def export_session(session_id: str):
     return render_transcript_html(state)
 
 
+# Why a session was closed from outside the conversation. Validated rather
+# than free text because this string becomes the session's DISPOSITION, and
+# a disposition taxonomy that accepts anything is a statistic nobody can use.
+CLOSE_REASONS = {
+    "caller_inactive": "the idle ladder ran out",
+    "caller_finished": "the caller indicated they were done",
+    "operator_closed": "closed from the operations side",
+}
+
+
 @app.post("/api/sessions/{session_id}/close")
-def close_session(session_id: str, reason: str = "caller_inactive"):
+def close_session(session_id: str, reason: str):
     """Close a session without a model call.
 
     An abandoned call still has to END — leaving it open forever is how a
@@ -178,15 +190,59 @@ def close_session(session_id: str, reason: str = "caller_inactive"):
     no conclusion. The close is deterministic (no model, no cost): the state
     machine moves to CLOSED and the reason is recorded, which is exactly the
     kind of decision DESIGN.md §4.1 says belongs in code rather than in a
-    model's judgement."""
+    model's judgement.
+
+    `reason` is REQUIRED. It used to default to "caller_inactive", which was
+    a quiet data-integrity bug: every close that forgot to say why was filed
+    as an abandonment, so a completed call that happened to be closed by some
+    other path would show up on the operations board as a caller who walked
+    away. A default value on a field that becomes a business metric is a way
+    of guessing, and this one guessed wrong in the direction that flatters
+    nothing and confuses everyone."""
     state = STORE.get(session_id)
     if state is None:
         raise HTTPException(404, "session_not_found")
+    if reason not in CLOSE_REASONS:
+        raise HTTPException(422, f"unknown close reason: {reason!r}; expected one of {sorted(CLOSE_REASONS)}")
     if state.phase not in (Phase.CLOSED, Phase.HUMAN_HANDOFF, Phase.ABUSE_TERMINATED):
         state.phase = Phase.CLOSED
         state.facts.escalation_reason = reason
         STORE.update(state)
-    return serialize_state(state, _get_spec(state.sop_name))
+    return serialize_state(state, _get_spec(state.sop_name), _get_domain())
+
+
+@app.post("/api/sessions/{session_id}/consent/poll")
+def poll_consent(session_id: str):
+    """Advance a pending third-party consent request on wall-clock time.
+
+    This endpoint exists because the original implementation contradicted its
+    own rationale. `machine.poll_pending_consent` argues — correctly —
+    that "a real asynchronous approval doesn't wait for an agent to decide
+    it's time to check; it resolves on its own schedule and the agent
+    observes the result". But it was only ever called from `transition()`,
+    which means it advanced once per CALLER TURN. A representative who asked
+    for consent and then sat quietly — the single most likely thing for
+    someone to do while waiting on someone else's authorisation — would wait
+    forever, and the timeout scenario could only be reached by typing filler
+    messages at the agent.
+
+    So the clock is now genuinely a clock. No model call: this is an
+    observation of external state, which is control-plane work (§4.1), and
+    charging a caller tokens for the passage of time would be absurd."""
+    state = STORE.get(session_id)
+    if state is None:
+        raise HTTPException(404, "session_not_found")
+    before = state.facts.consent_status
+    if state.facts.consent_status == ConsentStatus.PENDING:
+        poll_pending_consent(state, _get_domain())
+        if state.facts.consent_status != before:
+            STORE.update(state)
+        else:
+            STORE.update(state)      # poll_count moved even when status didn't
+    return {
+        "changed": state.facts.consent_status != before,
+        "state": serialize_state(state, _get_spec(state.sop_name), _get_domain()),
+    }
 
 
 @app.post("/api/sessions/{session_id}/events")
@@ -214,6 +270,87 @@ def post_client_event(session_id: str, req: ClientEventRequest):
         payload.setdefault("response_effort", phase_spec.response_effort)
     record_event(session_id, req.event, payload)
     return {"ok": True}
+
+
+@app.get("/api/evals/report", response_class=HTMLResponse)
+def eval_report(report: str = "latest.json"):
+    """The eval suite rendered as a standalone page.
+
+    Served rather than only written to disk so the artifact has a URL: the
+    person who needs to read it — a compliance or operations reviewer — is
+    not going to clone the repo, and "trust me, the tests pass" is not a
+    claim anyone should accept about a system that handles protected health
+    information."""
+    from evals.html_report import render
+    return render(report)
+
+
+@app.get("/api/sessions")
+def list_sessions():
+    """Every session this deployment knows about, live or on disk.
+
+    The operations board is the reason this exists. A single conversation
+    demonstrates that the SOP works; a buyer's operations lead is asking a
+    different question — across everything that ran today, where did calls
+    stop, and which ones need a person? That question is unanswerable from
+    inside one chat window, and it is the question the product is actually
+    bought to answer.
+
+    Deliberately a summary per session, not full state: the board should
+    stay cheap to open when there are a thousand rows, and anything a
+    reviewer needs beyond this is one click away in the export."""
+    rows = []
+    skipped_empty = 0
+    for sid in STORE.list_sessions():
+        st = STORE.get(sid)
+        if st is None:
+            continue
+        # A session row is created the moment someone opens the page, before
+        # anyone has said anything. Those are not calls, and showing them
+        # makes the board read as a wall of stalled verifications when in
+        # fact nobody ever spoke. Counted, not listed.
+        if not st.transcript:
+            skipped_empty += 1
+            continue
+        d = classify(st)
+        last_caller = next((t.text for t in reversed(st.transcript) if t.role == "caller"), "")
+        last_ts = st.transcript[-1].ts if st.transcript else st.created_at
+        rows.append({
+            "session_id": sid,
+            "sop_name": st.sop_name,
+            "phase": st.phase.value,
+            "created_at": st.created_at,
+            "last_activity_at": last_ts,
+            "turns_used": st.facts.turns_used,
+            "cost_usd": round(st.facts.cost_usd, 5),
+            "verified": st.facts.is_verified(),
+            "caller_role": st.facts.caller_role.value,
+            "peak_intensity": st.facts.peak_intensity,
+            "consent_status": st.facts.consent_status.value,
+            "case_id": st.memory.active_case_id or st.memory.confirmed_case_id,
+            "resolved_intent": st.memory.resolved_intent,
+            "last_caller_message": last_caller[:160],
+            "disposition": d.as_dict(),
+        })
+    rows.sort(key=lambda r: r["last_activity_at"], reverse=True)
+
+    codes = [r["disposition"]["code"] for r in rows]
+    by_class: dict[str, int] = {}
+    for c in codes:
+        cls = DISPOSITIONS[c].outcome_class if c in DISPOSITIONS else "unknown"
+        by_class[cls] = by_class.get(cls, 0) + 1
+
+    return {
+        "sessions": rows,
+        "rollup": {
+            "total": len(rows),
+            "by_outcome_class": by_class,
+            "containment_rate": containment_rate(codes),
+            "needs_review": sum(1 for r in rows if r["disposition"]["review_flag"]),
+            "opened_never_started": skipped_empty,
+            "total_cost_usd": round(sum(r["cost_usd"] for r in rows), 4),
+        },
+    }
 
 
 @app.get("/api/metrics/idle")
@@ -272,7 +409,7 @@ def post_message(session_id: str, req: MessageRequest):
             yield f"event: token\ndata: {json.dumps({'text': buffer})}\n\n"
             time.sleep(0.02)
 
-        done_payload = {"reply": result.reply, "state": serialize_state(result.state, spec), "trace_event": result.trace_event}
+        done_payload = {"reply": result.reply, "state": serialize_state(result.state, spec, domain), "trace_event": result.trace_event}
         yield f"event: done\ndata: {json.dumps(done_payload, default=str)}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
