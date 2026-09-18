@@ -36,30 +36,33 @@ class TestCreateFollowup:
 
 
 class TestRequestConsent:
-    def test_default_scenario_approves_on_second_poll(self):
-        state = make_state(consent_scenario="default")
-        r1 = handle_request_consent(state, {}, "t1", CONSENT_SCENARIOS)
-        assert state.facts.consent_status == ConsentStatus.PENDING
-        r2 = handle_request_consent(state, {}, "t2", CONSENT_SCENARIOS)
-        assert state.facts.consent_status == ConsentStatus.APPROVED
-        assert r2.output["status"] == "approved"
+    """`request_consent` INITIATES; the state machine advances the poll
+    (see tests/test_state_machine.py::TestConsentAutoPolling). Split this
+    way on purpose — DESIGN.md §7.10: how often to check an async approval
+    is not a judgement call a model should be making."""
 
-    def test_timeout_scenario_never_approves_and_reports_timed_out(self):
-        state = make_state(consent_scenario="timeout")
+    def test_opening_a_request_sets_pending_on_the_default_scenario(self):
+        state = make_state(consent_scenario="default")
+        r = handle_request_consent(state, {}, "t1", CONSENT_SCENARIOS)
+        assert state.facts.consent_status == ConsentStatus.PENDING
+        assert state.facts.consent_poll_count == 1
+        assert r.output["status"] == "pending"
+
+    def test_reopening_while_pending_is_a_no_op_on_status(self):
+        """A caller asking 'has it come through?' must not be able to make
+        the model advance the approval by re-calling the tool — otherwise
+        the polling cadence leaks back into the model's control."""
+        state = make_state(consent_scenario="default")
+        handle_request_consent(state, {}, "t1", CONSENT_SCENARIOS)
         for _ in range(5):
-            handle_request_consent(state, {}, "t", CONSENT_SCENARIOS)
-        assert state.facts.consent_status == ConsentStatus.TIMED_OUT
+            handle_request_consent(state, {}, "tN", CONSENT_SCENARIOS)
+        assert state.facts.consent_status == ConsentStatus.PENDING
+        assert state.facts.consent_poll_count == 1
 
-    def test_timeout_scenario_stays_pending_before_exhausted(self):
+    def test_timeout_scenario_opens_pending_like_any_other(self):
         state = make_state(consent_scenario="timeout")
         handle_request_consent(state, {}, "t1", CONSENT_SCENARIOS)
         assert state.facts.consent_status == ConsentStatus.PENDING
-
-    def test_poll_count_increments(self):
-        state = make_state(consent_scenario="default")
-        handle_request_consent(state, {}, "t1", CONSENT_SCENARIOS)
-        handle_request_consent(state, {}, "t2", CONSENT_SCENARIOS)
-        assert state.facts.consent_poll_count == 2
 
 
 class TestSendSummaryEmail:

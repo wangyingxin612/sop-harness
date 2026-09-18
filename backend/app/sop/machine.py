@@ -20,6 +20,7 @@ from app.sop.policy import resolve
 from app.sop.spec import SopSpec
 from app.sop.types import (
     TERMINAL_PHASES,
+    ConsentStatus,
     Phase,
     PendingAction,
     ScopeRing,
@@ -114,6 +115,36 @@ def _identity_phase_transition(
     if facts.verification_status == VerificationStatus.VERIFIED:
         return Phase.RESOLVE_INTENT
     return Phase.VERIFY_ID
+
+
+def _auto_poll_pending_consent(state: SessionState, domain: DomainContext) -> None:
+    """Advance a pending consent request once per turn, automatically
+    (DESIGN.md §7.10).
+
+    Why this is NOT the model's job: a real asynchronous approval doesn't
+    wait for an agent to decide it's time to check — it resolves on its own
+    schedule and the agent observes the result. Leaving the polling cadence
+    to the model's judgement made a real behavior (does consent eventually
+    arrive?) depend on a stylistic choice (does the agent re-check when
+    asked, or proactively?), which showed up as eval flakiness. Moving the
+    cadence into the state machine removes the model from the loop entirely:
+    `request_consent` *initiates*, the machine *observes*.
+    """
+    facts = state.facts
+    if facts.consent_status != ConsentStatus.PENDING:
+        return
+    scenario = domain.consent_scenarios.get(
+        state.consent_scenario, domain.consent_scenarios.get("default", {})
+    )
+    sequence = scenario.get("status_sequence", [])
+    if not sequence:
+        return
+    facts.consent_poll_count += 1
+    idx = min(facts.consent_poll_count - 1, len(sequence) - 1)
+    if sequence[idx] == "approved":
+        facts.consent_status = ConsentStatus.APPROVED
+    elif facts.consent_poll_count >= len(sequence):
+        facts.consent_status = ConsentStatus.TIMED_OUT
 
 
 def _try_narrow_intent_candidate(state: SessionState, domain: DomainContext) -> None:
@@ -218,6 +249,7 @@ def transition(state: SessionState, signals: TurnSignals, domain: DomainContext,
 
     _record_deferred_signals(new_state, signals)
     _apply_emotion_and_abuse_counters(new_state, signals, spec)
+    _auto_poll_pending_consent(new_state, domain)
 
     phase = new_state.phase
     facts = new_state.facts

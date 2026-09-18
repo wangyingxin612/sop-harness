@@ -58,30 +58,41 @@ def handle_create_followup(state: SessionState, tool_input: dict, tool_use_id: s
 def handle_request_consent(
     state: SessionState, tool_input: dict, tool_use_id: str, consent_scenarios: dict
 ) -> ToolEffectResult:
-    """Simulates an asynchronous consent check (DESIGN.md §7.10) against
-    consent_scenarios.json. Each call advances one poll step; the `default`
-    scenario approves on the 2nd poll, `timeout` never approves and reports
-    TIMED_OUT once the sequence is exhausted — the graceful-degradation
-    branch the brief's fixtures were clearly built to exercise."""
+    """INITIATES an asynchronous consent request (DESIGN.md §7.10).
+
+    Deliberately does not poll: once a request is open, the state machine
+    advances it once per turn on its own (machine._auto_poll_pending_consent),
+    because a real async approval resolves on its own schedule rather than
+    when an agent decides to look. The model's only decision here is
+    *whether to ask*, which is a genuine judgement call; *how often to check*
+    is not, and used to be a source of eval flakiness when it was.
+
+    Re-calling this while a request is already open is a no-op on status —
+    it just reports the current state, which is what a caller asking "has it
+    come through?" should get.
+    """
     facts = state.facts
     scenario = consent_scenarios.get(state.consent_scenario, consent_scenarios["default"])
     sequence = scenario["status_sequence"]
-    facts.consent_poll_count += 1
-    idx = min(facts.consent_poll_count - 1, len(sequence) - 1)
-    raw_status = sequence[idx]
 
-    if raw_status == "approved":
-        facts.consent_status = ConsentStatus.APPROVED
-    elif facts.consent_poll_count >= len(sequence):
-        facts.consent_status = ConsentStatus.TIMED_OUT
+    if facts.consent_status in (ConsentStatus.NOT_REQUESTED, ConsentStatus.DECLINED):
+        facts.consent_poll_count += 1
+        idx = min(facts.consent_poll_count - 1, len(sequence) - 1)
+        if sequence[idx] == "approved":
+            facts.consent_status = ConsentStatus.APPROVED
+        elif facts.consent_poll_count >= len(sequence):
+            facts.consent_status = ConsentStatus.TIMED_OUT
+        else:
+            facts.consent_status = ConsentStatus.PENDING
+        action = "opened"
     else:
-        facts.consent_status = ConsentStatus.PENDING
+        action = "already open"
 
     return ToolEffectResult(
         tool_name="request_consent",
         tool_use_id=tool_use_id,
         output={"status": facts.consent_status.value, "poll_count": facts.consent_poll_count},
-        summary_for_trace=f"request_consent() -> {facts.consent_status.value}",
+        summary_for_trace=f"request_consent() [{action}] -> {facts.consent_status.value}",
     )
 
 

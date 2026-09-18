@@ -209,6 +209,11 @@ class DomainContext:
     policyholders: list[PolicyholderRecord]
     representatives: list[RepresentativeRecord]
     now: date
+    # Async-consent fixture scenarios (DESIGN.md §7.10). Held here rather than
+    # loaded ad hoc by the orchestrator so that `transition()` — which must
+    # stay pure — can advance a pending consent poll itself (see
+    # machine._auto_poll_pending_consent).
+    consent_scenarios: dict = field(default_factory=dict)
 
     def policyholder_by_party_id(self, party_id: str) -> PolicyholderRecord | None:
         for p in self.policyholders:
@@ -238,4 +243,5 @@ def load_domain(fixtures_dir: str | Path, now: date) -> DomainContext:
         policyholders=load_policyholders(fixtures_dir / "policyholders.json"),
         representatives=load_representatives(fixtures_dir / "representatives.json"),
         now=now,
+        consent_scenarios=json.loads((fixtures_dir / "consent_scenarios.json").read_text()),
     )

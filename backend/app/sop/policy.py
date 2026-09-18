@@ -99,13 +99,40 @@ def _base_directives(spec: SopSpec, phase: Phase) -> list[Directive]:
     ]
 
 
-def _allowed_tools(spec: SopSpec, phase: Phase, always_available: tuple[str, ...]) -> tuple[str, ...]:
+def _agent_initiated_transfer_allowed(state: SessionState, spec: SopSpec) -> bool:
+    """Whether the model may decide *on its own* to transfer (DESIGN.md §7.8:
+    "know when to stop persuading" implies persuading first).
+
+    A caller who explicitly asks for a human never depends on this — that path
+    is deterministic and runs in `transition()` before ACT is ever called
+    (§7.4 precedence rule 1). This governs only the model's own initiative.
+
+    Structural, not a prompt rule: on the very first exchange of a gated phase
+    the tool is simply not in `allowed_tools`, so the model cannot call it —
+    it has to try the persuasion ladder first. It becomes available once the
+    conversation has actually had a chance to go wrong (a second turn, a
+    mismatch, or a locked/abusive state).
+    """
+    facts = state.facts
+    if state.phase != Phase.VERIFY_ID:
+        return True  # after the identity gate, the model's judgement is trusted
+    if facts.mismatch_count >= 1 or facts.off_topic_strikes >= 1:
+        return True
+    return facts.turns_used >= spec.escalation.min_turns_before_agent_initiated_transfer
+
+
+def _allowed_tools(
+    state: SessionState, spec: SopSpec, phase: Phase, always_available: tuple[str, ...]
+) -> tuple[str, ...]:
     phase_spec = spec.phase_spec(phase)
     if phase_spec is None:
         return ()
     if phase in (Phase.HUMAN_HANDOFF, Phase.ABUSE_TERMINATED, Phase.CLOSED):
         return tuple(phase_spec.tools)
-    return tuple(dict.fromkeys([*phase_spec.tools, *always_available]))  # dedup, keep order
+    available = [*phase_spec.tools, *always_available]
+    if not _agent_initiated_transfer_allowed(state, spec):
+        available = [t for t in available if t != "transfer_to_human"]
+    return tuple(dict.fromkeys(available))  # dedup, keep order
 
 
 def _refusal_directive(spec: SopSpec, facts) -> Directive:
@@ -198,6 +225,7 @@ def resolve(state: SessionState, domain: DomainContext, spec: SopSpec) -> TurnPl
             "caller_role": facts.caller_role.value,
         }
         forbidden = [
+            "a farewell or sign-off",
             "any claim fact",
             "any claim amount",
             "any claim status",
@@ -213,7 +241,7 @@ def resolve(state: SessionState, domain: DomainContext, spec: SopSpec) -> TurnPl
         merged_hint = merge_case_hints(memory.case_hints)
         merged_hint = apply_intent_inference(merged_hint, memory.resolved_intent)
         candidates = resolve_candidates(domain.claims_for_party(facts.verified_party_id), merged_hint, domain.now)
-        forbidden = ["denial reason", "documents needed", "any dollar amount"]
+        forbidden = ["a farewell or sign-off", "denial reason", "documents needed", "any dollar amount"]
 
         if memory.candidate_case_id:
             claim = domain.claim_by_id(memory.candidate_case_id)
@@ -266,7 +294,13 @@ def resolve(state: SessionState, domain: DomainContext, spec: SopSpec) -> TurnPl
                 visible_facts = {"claim": full_claim, "guidance": _gather_guidance(domain, claim)}
         if facts.caller_role == CallerRole.REPRESENTATIVE:
             directives.append(REPRESENTATIVE_SCOPE_NOTE)
-        forbidden = ["any amount or date not present in the claim data provided this turn"]
+        # "a farewell or sign-off": closing the call is POST_PROCESS's job, and
+        # the summary offer (R6) is mandatory — the model doesn't get to skip
+        # it by sensing the conversation is over (DESIGN.md §7.7).
+        forbidden = [
+            "a farewell or sign-off",
+            "any amount or date not present in the claim data provided this turn",
+        ]
         if reduced_scope:
             forbidden = [*forbidden, "the denial narrative", "any dollar amount", "SSN or ID digits"]
             required = [*required, "an offer to request the policyholder's consent for full detail, if not already declined"]
@@ -304,7 +338,7 @@ def resolve(state: SessionState, domain: DomainContext, spec: SopSpec) -> TurnPl
 
     return TurnPlan(
         phase=phase,
-        allowed_tools=_allowed_tools(spec, phase, always_available_tools),
+        allowed_tools=_allowed_tools(state, spec, phase, always_available_tools),
         visible_facts=visible_facts,
         directives=tuple(directives),
         required_elements=tuple(required),

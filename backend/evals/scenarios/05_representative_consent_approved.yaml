@@ -15,14 +15,11 @@ turns:
     expect_phase: PROCESS_CASE
   - user: "Can you request her consent so we can go over the full details?"
     expect_phase: PROCESS_CASE
+  # The default fixture scenario approves on the 2nd poll. Polling cadence is
+  # now the state machine's job, not the model's (machine._auto_poll_pending_consent),
+  # so this resolves deterministically one turn after the request opens — no
+  # extra "please check again" nudge turn needed to absorb model variance.
   - user: "Has it come through yet?"
-    expect_phase: PROCESS_CASE
-  # The default scenario approves on the 2nd poll (evals/../fixtures/consent_scenarios.json). Exactly
-  # how many turns it takes the model to poll twice varies (sometimes it polls proactively when first
-  # asked to request consent, sometimes only when explicitly asked "has it come through" — both are
-  # reasonable agent behaviors; see EVAL.md §5). This extra nudge keeps the scenario robust to that
-  # variance without weakening what it tests.
-  - user: "Can you check again please?"
     expect_phase: PROCESS_CASE
 final:
   caller_role: representative

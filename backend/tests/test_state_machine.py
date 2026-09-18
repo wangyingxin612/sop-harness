@@ -9,6 +9,7 @@ import pytest
 from app.sop.machine import transition
 from app.sop.types import (
     CaseHint,
+    ConsentStatus,
     Phase,
     ScopeRing,
     SessionState,
@@ -327,3 +328,49 @@ def test_transition_does_not_mutate_input_state(domain, spec):
     )
     assert state.phase == original_phase
     assert state.facts.matched_factor_count == 0
+
+
+class TestConsentAutoPolling:
+    """DESIGN.md §7.10 — polling cadence belongs to the state machine, not
+    the model. These tests moved down from test_tool_effects.py when the
+    behavior moved; they assert the same properties (default approves on the
+    2nd observation, timeout never approves and eventually reports
+    TIMED_OUT) at the layer that now owns them."""
+
+    def _pending_state(self, consent_scenario: str) -> SessionState:
+        state = make_state(consent_scenario=consent_scenario)
+        state.facts.consent_status = ConsentStatus.PENDING
+        state.facts.consent_poll_count = 1  # a request was opened
+        return state
+
+    def test_default_scenario_approves_on_the_next_turn(self, domain, spec):
+        state = self._pending_state("default")
+        state = transition(state, verify_signals(), domain, spec)
+        assert state.facts.consent_status == ConsentStatus.APPROVED
+
+    def test_timeout_scenario_never_approves_and_ends_timed_out(self, domain, spec):
+        state = self._pending_state("timeout")
+        for i in range(4):
+            state = transition(state, verify_signals(turn_index=i), domain, spec)
+            assert state.facts.consent_status in (ConsentStatus.PENDING, ConsentStatus.TIMED_OUT)
+        assert state.facts.consent_status == ConsentStatus.TIMED_OUT
+
+    def test_timeout_scenario_stays_pending_before_the_sequence_is_exhausted(self, domain, spec):
+        state = self._pending_state("timeout")
+        state = transition(state, verify_signals(), domain, spec)
+        assert state.facts.consent_status == ConsentStatus.PENDING
+
+    def test_no_polling_when_no_request_is_open(self, domain, spec):
+        """Never-requested consent must not drift on its own — polling only
+        advances something a caller's representative actually asked for."""
+        state = make_state(consent_scenario="default")
+        for i in range(4):
+            state = transition(state, verify_signals(turn_index=i), domain, spec)
+        assert state.facts.consent_status == ConsentStatus.NOT_REQUESTED
+        assert state.facts.consent_poll_count == 0
+
+    def test_approved_consent_does_not_regress(self, domain, spec):
+        state = make_state(consent_scenario="default")
+        state.facts.consent_status = ConsentStatus.APPROVED
+        state = transition(state, verify_signals(), domain, spec)
+        assert state.facts.consent_status == ConsentStatus.APPROVED

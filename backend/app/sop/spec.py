@@ -37,6 +37,11 @@ class EscalationSpec:
     max_injection_flags: int = 2
     off_topic_decay_after_turns: int = 2   # DESIGN.md §7.9 — counters must decay
     max_stalled_verify_turns: int = 6      # softer valve: stuck (not necessarily hostile) caller
+    # The model may not transfer on its own initiative before this many turns
+    # of a gated phase have elapsed — it has to try the persuasion ladder
+    # first (§7.8). An explicit caller request bypasses this entirely and is
+    # handled deterministically in transition().
+    min_turns_before_agent_initiated_transfer: int = 2
 
 
 @dataclass(frozen=True)
@@ -81,6 +86,9 @@ def load_spec(path: str | Path) -> SopSpec:
         max_injection_flags=esc_raw.get("max_injection_flags", 2),
         off_topic_decay_after_turns=esc_raw.get("off_topic_decay_after_turns", 2),
         max_stalled_verify_turns=esc_raw.get("max_stalled_verify_turns", 6),
+        min_turns_before_agent_initiated_transfer=esc_raw.get(
+            "min_turns_before_agent_initiated_transfer", 2
+        ),
     )
 
     identity_raw = raw.get("identity", {})

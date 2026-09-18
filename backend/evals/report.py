@@ -39,6 +39,15 @@ def summarize(results) -> dict:
             attribution[key] = attribution.get(key, 0) + 1
 
     total_cost = sum(r.total_cost_usd for r in results)
+    # Guard-intervention rate: how often a draft had to be repaired or
+    # replaced. DESIGN.md §8.3 — this is a free model-quality signal, and a
+    # rising number after a prompt/model change is an early warning even
+    # when every scenario still passes.
+    total_turns = sum(len(r.turn_outcomes) for r in results)
+    repaired = sum(
+        1 for r in results for o in r.turn_outcomes if len(o.guard_attempts) > 1
+    )
+    fell_back = sum(1 for r in results for o in r.turn_outcomes if o.used_fallback)
     return {
         "total_scenarios": total,
         "passed": passed,
@@ -47,6 +56,9 @@ def summarize(results) -> dict:
         "transfer_attribution": attribution,
         "total_cost_usd": round(total_cost, 4),
         "avg_cost_usd_per_scenario": round(total_cost / total, 4) if total else None,
+        "total_turns": total_turns,
+        "guard_repair_rate": round(repaired / total_turns, 3) if total_turns else None,
+        "guard_fallback_rate": round(fell_back / total_turns, 3) if total_turns else None,
     }
 
 
@@ -74,6 +86,9 @@ def write_report(results, out_path: str | Path) -> None:
                         "route": o.route,
                         "phase_ok": o.phase_assertion_ok,
                         "route_ok": o.route_assertion_ok,
+                        "used_fallback": o.used_fallback,
+                        "guard_attempts": o.guard_attempts,
+                        "tool_effects": o.tool_effects,
                     }
                     for o in r.turn_outcomes
                 ],

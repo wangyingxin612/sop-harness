@@ -163,6 +163,62 @@ class TestContractGuard:
         blocking, missing = check_contract("The allowed max is $1,450.00.", plan)
         assert blocking
 
+    # --- farewell / premature-close: was a prompt rule, now a guard rule.
+    # "Skipped a required SOP step" is exactly the class of failure that
+    # belongs in code rather than in prose (DESIGN.md §4.1). Live-observed:
+    # the model said a warm goodbye from inside PROCESS_CASE and never
+    # reached the mandatory POST_PROCESS summary offer (R6).
+
+    @pytest.mark.parametrize(
+        "reply",
+        [
+            "You're welcome, Margaret. Have a great day!",
+            "Glad I could help — take care.",
+            "Thanks for calling, and goodbye.",
+            "That's everything then. Bye now.",
+        ],
+    )
+    def test_farewell_blocked_when_phase_forbids_closing(self, reply):
+        plan = make_plan(phase=Phase.PROCESS_CASE, forbidden_elements=("a farewell or sign-off",))
+        blocking, _ = check_contract(reply, plan)
+        assert blocking, f"should have blocked a premature sign-off: {reply!r}"
+
+    @pytest.mark.parametrize(
+        "reply",
+        [
+            "Is there anything else about this claim I can help with?",
+            "Once those are submitted, the claim goes back into review.",
+            "Thanks for confirming that — let me pull it up.",
+        ],
+    )
+    def test_ordinary_replies_are_not_mistaken_for_a_sign_off(self, reply):
+        plan = make_plan(phase=Phase.PROCESS_CASE, forbidden_elements=("a farewell or sign-off",))
+        blocking, _ = check_contract(reply, plan)
+        assert blocking == [], f"false positive on: {reply!r}"
+
+    @pytest.mark.parametrize(
+        "reply",
+        [
+            # Live regression: "thanks for calling" is a contact-centre
+            # GREETING, and a sign-off is positionally final — both
+            # constraints matter, and both were learned the hard way.
+            "Hi David, thanks for calling about your mother's claim. Let me pull that up.",
+            "Thank you for calling — I can help with that. What's your date of birth?",
+            "Take care of those documents and send them when you can — what else can I check?",
+        ],
+    )
+    def test_greetings_and_mid_reply_phrasing_are_not_sign_offs(self, reply):
+        plan = make_plan(phase=Phase.PROCESS_CASE, forbidden_elements=("a farewell or sign-off",))
+        blocking, _ = check_contract(reply, plan)
+        assert blocking == [], f"false positive on: {reply!r}"
+
+    def test_farewell_allowed_where_the_phase_permits_closing(self):
+        """POST_PROCESS/CLOSED don't carry the forbidden element, so the same
+        sentence is fine there — the rule is phase-scoped, not global."""
+        plan = make_plan(phase=Phase.POST_PROCESS, forbidden_elements=())
+        blocking, _ = check_contract("Thanks for calling, Margaret. Take care!", plan)
+        assert blocking == []
+
     def test_no_forbidden_hit_when_absent(self):
         plan = make_plan(forbidden_elements=("any case id", "any dollar amount"))
         blocking, missing = check_contract("I can help you with that.", plan)

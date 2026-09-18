@@ -24,10 +24,21 @@ from app.sop.types import SessionState, TurnPlan
 
 _MIN_FORBIDDEN_LEN = 4  # skip trivially short values (e.g. "0.00") to cut false positives
 
-_ATTRIBUTION_MARKERS = (
-    "the record shows", "on file", "according to the file", "your claim shows",
-    "our records show", "our system shows", "shows that", "it shows", "file shows",
-    "the file shows", "currently shows",
+# Attribution is a PATTERN, not a list of literals. A fixed-string list
+# missed "the record ALSO shows ..." — one adverb away from a phrasing that
+# is obviously attributed — and burned a repair round-trip on a perfectly
+# good sentence. Allowing an optional adverb and a family of reporting verbs
+# covers the natural variants without loosening what the rule means.
+_ATTRIBUTION_RE = re.compile(
+    r"\b("
+    r"(the |your |our )?(record|records|file|claim|system|account)s?\s+"
+    r"(also\s+|currently\s+|now\s+|still\s+)?"
+    r"(shows?|show|indicates?|lists?|reflects?|says?|has)"
+    r"|on file"
+    r"|according to (the|our|your)"
+    r"|it shows"
+    r")\b",
+    re.IGNORECASE,
 )
 
 # A promissory speech act = (subject) + (modal/promise verb) + (outcome verb).
@@ -69,6 +80,39 @@ _DURATION_RE = re.compile(r"\b(\d+)\s*(?:day|days|week|weeks|business day|busine
 
 _CASE_ID_RE = re.compile(r"\bCL-\d{3,6}\b", re.IGNORECASE)
 _DOLLAR_RE = re.compile(r"\$\s?\d[\d,]*\.?\d*|\b\d+\.\d{2}\b")
+
+# Closing the call is a PHASE, not a sentence the model gets to write whenever
+# it senses the conversation is over (DESIGN.md §7.7: the summary offer is
+# mandatory, R6). Observed live: the model said a warm goodbye from inside
+# PROCESS_CASE and skipped POST_PROCESS entirely. This was first patched with
+# a prompt rule; it belongs in the guard, because "skipped a required SOP
+# step" is exactly the class of thing that should be enforced in code rather
+# than requested in prose (§4.1).
+_FAREWELL_RE = re.compile(
+    # Deliberately EXCLUDES "thanks/thank you for calling": in a contact
+    # centre that is a standard GREETING ("thanks for calling about your
+    # mother's claim"), not a sign-off. Including it false-positived on an
+    # opening line in live testing — the same mistake as putting the generic
+    # verb "get" in the promissory list. Signal kept, context constrained.
+    r"\b(have a (great|good|nice|lovely) (day|one|rest of your)"
+    # "take care" alone is a sign-off; "take care OF those documents" is
+    # an instruction. One lookahead separates them.
+    r"|take care(?!\s+of)"
+    r"|good\s?bye|bye now|bye for now"
+    r"|we'?re all set here"
+    r"|that'?s everything then)\b",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_signoff(reply: str) -> bool:
+    """A sign-off is positionally final, so only the tail of the reply is
+    examined. "Take care of those documents and call us back" mid-reply is
+    not the model closing the call; the same words as the last thing said
+    are."""
+    sentences = _split_sentences(reply)
+    tail = " ".join(sentences[-2:]) if sentences else reply
+    return bool(_FAREWELL_RE.search(tail))
 
 
 @dataclass
@@ -182,7 +226,7 @@ def check_commitment(reply: str) -> list[str]:
     for i, sentence in enumerate(sentences):
         if _SENSITIVE_NUMBER_RE.search(sentence):
             window = lowered[max(0, i - 1): i + 1]
-            attributed = any(marker in s for s in window for marker in _ATTRIBUTION_MARKERS)
+            attributed = any(_ATTRIBUTION_RE.search(s) for s in window)
             if not attributed:
                 violations.append(f"unattributed sensitive figure: {sentence!r} (add 'the record shows...' or similar)")
     return violations
@@ -214,6 +258,7 @@ _FORBIDDEN_MATCHERS = {
     # the actual policyholder's real digits, digit-normalized. Deferring to
     # it here avoids a duplicate, much cruder regex.
     "SSN or ID digits": lambda r: False,
+    "a farewell or sign-off": lambda r: _looks_like_signoff(r),
 }
 
 

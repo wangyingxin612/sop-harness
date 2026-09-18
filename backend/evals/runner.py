@@ -36,6 +36,12 @@ class TurnOutcome:
     route: str
     phase_assertion_ok: bool
     route_assertion_ok: bool
+    # Diagnostics: without these, a failing scenario tells you WHAT broke but
+    # not WHY, and the only way to find out is to re-run and hope the
+    # non-determinism reproduces. Cheap to record, expensive to be without.
+    guard_attempts: list = field(default_factory=list)
+    tool_effects: list = field(default_factory=list)
+    used_fallback: bool = False
 
 
 @dataclass
@@ -91,10 +97,14 @@ def run_scenario(
             events.append(r.trace_event)
             phase_ok = turn.expect_phase is None or state.phase.value == turn.expect_phase
             route_ok = turn.expect_route is None or r.trace_event["plan"]["route"] == turn.expect_route
+            attempts = r.trace_event.get("guard_attempts", [])
             result.turn_outcomes.append(
                 TurnOutcome(
                     turn=turn, reply=r.reply, phase_after=state.phase.value,
                     route=r.trace_event["plan"]["route"], phase_assertion_ok=phase_ok, route_assertion_ok=route_ok,
+                    guard_attempts=attempts,
+                    tool_effects=r.trace_event.get("tool_effects", []),
+                    used_fallback=any(a.get("fallback") for a in attempts),
                 )
             )
             result.total_cost_usd += r.trace_event["cost"]["total_cost_usd"]

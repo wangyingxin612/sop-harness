@@ -125,8 +125,41 @@ class TestFreedomLevel:
         assert "claim" in plan.visible_facts
         assert "guidance" in plan.visible_facts
 
-    def test_transfer_to_human_always_available_in_nonterminal_phases(self, domain, spec):
+    def test_transfer_withheld_from_the_model_on_the_first_verify_turn(self, domain, spec):
+        """DESIGN.md §7.8 — "know when to stop persuading" implies persuading
+        first. Structural, not a prompt rule: the model cannot call a tool it
+        was never shown, so it has to try the ladder before it can transfer."""
         state = make_state()
+        state, plan = decide(state, signals(), domain, spec)
+        assert plan.phase == Phase.VERIFY_ID
+        assert "transfer_to_human" not in plan.allowed_tools
+
+    def test_transfer_becomes_available_once_the_conversation_has_had_a_chance(self, domain, spec):
+        state = make_state()
+        state, _ = decide(state, signals(), domain, spec)
+        state, plan = decide(state, signals(turn_index=1), domain, spec)
+        assert "transfer_to_human" in plan.allowed_tools
+
+    def test_transfer_available_immediately_on_a_hard_signal(self, domain, spec):
+        """A mismatch is a real signal something is wrong — the ladder
+        requirement shouldn't trap a caller who can't verify."""
+        state = make_state()
+        state, plan = decide(state, signals(identity_candidates={"dob": "1999-01-01"}), domain, spec)
+        assert state.facts.mismatch_count == 1
+        assert "transfer_to_human" in plan.allowed_tools
+
+    def test_explicit_caller_request_never_depends_on_tool_availability(self, domain, spec):
+        """The caller-sovereignty path is deterministic and runs before ACT,
+        so withholding the tool cannot strand a caller who asks for a human
+        on turn one (DESIGN.md §7.4 precedence rule 1)."""
+        state = make_state()
+        state, plan = decide(state, signals(escalation_request=True), domain, spec)
+        assert plan.phase == Phase.HUMAN_HANDOFF
+        assert plan.route == "human_handoff"
+
+    def test_transfer_available_in_later_phases(self, domain, spec):
+        state = make_state(phase=Phase.PROCESS_CASE)
+        state.facts.verified_party_id = "P9"
         state, plan = decide(state, signals(), domain, spec)
         assert "transfer_to_human" in plan.allowed_tools
 
