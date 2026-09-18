@@ -1,0 +1,140 @@
+"""Tests for the output guard (DESIGN.md §7.9) — entirely LLM-free, exactly
+like the policy layer. We hand-craft candidate replies the way a model might
+produce them (good and bad) and assert the guard's verdict.
+"""
+from app.guards.output_guard import check_commitment, check_contract, check_disclosure, check_grounding
+from app.sop.types import Phase, TurnPlan
+
+
+def make_plan(**overrides) -> TurnPlan:
+    base = dict(phase=Phase.VERIFY_ID, allowed_tools=(), visible_facts={}, required_elements=(), forbidden_elements=())
+    base.update(overrides)
+    return TurnPlan(**base)
+
+
+class TestDisclosureGuard:
+    def test_flags_unauthorized_dob_in_verify_id(self, domain):
+        plan = make_plan(visible_facts={})
+        reply = "I can confirm your date of birth is 1985-03-15."
+        violations = check_disclosure(reply, domain, plan)
+        assert violations
+
+    def test_flags_unauthorized_denial_reason(self, domain):
+        plan = make_plan(phase=Phase.VERIFY_ID, visible_facts={})
+        reply = "Your claim was denied because the review file did not include the pathology report and the treating provider office note."
+        violations = check_disclosure(reply, domain, plan)
+        assert violations
+
+    def test_no_violation_when_value_is_actually_visible(self, domain):
+        plan = make_plan(
+            phase=Phase.PROCESS_CASE,
+            visible_facts={"claim": {"case_id": "CL-2048", "denial_reason": "the review file did not include the pathology report and the treating provider office note"}},
+        )
+        reply = "Your claim CL-2048 was denied because the review file did not include the pathology report and the treating provider office note."
+        violations = check_disclosure(reply, domain, plan)
+        assert violations == []
+
+    def test_flags_reformatted_ssn_digits(self, domain):
+        """DESIGN.md §7.11 ASR-noise note: a reformatted (spoken-style) leak
+        should still be caught even if it doesn't literally match the fixture string."""
+        plan = make_plan(visible_facts={})
+        reply = "Just to confirm, that's four four seven two on file."
+        violations = check_disclosure(reply, domain, plan)
+        assert any("4472" in v for v in violations)
+
+    def test_does_not_flag_trivial_zero_amount(self, domain):
+        plan = make_plan(visible_facts={})
+        reply = "There's nothing else I can share right now."
+        assert check_disclosure(reply, domain, plan) == []
+
+
+class TestGroundingGuard:
+    def test_flags_ungrounded_amount(self, domain):
+        plan = make_plan(phase=Phase.PROCESS_CASE, visible_facts={"claim": {"allowed_max_amount": "1450.00"}})
+        reply = "The record shows you're entitled to $2,000."
+        violations = check_grounding(reply, plan)
+        assert violations
+
+    def test_allows_grounded_amount(self, domain):
+        plan = make_plan(phase=Phase.PROCESS_CASE, visible_facts={"claim": {"allowed_max_amount": "1450.00"}})
+        reply = "On file, the allowed maximum is $1,450.00."
+        assert check_grounding(reply, plan) == []
+
+    def test_allows_grounded_duration(self, domain):
+        plan = make_plan(phase=Phase.PROCESS_CASE, visible_facts={"claim": {"days_until_appeal_deadline": 26}})
+        reply = "On file, you have 26 days left to appeal."
+        assert check_grounding(reply, plan) == []
+
+    def test_flags_ungrounded_duration(self, domain):
+        plan = make_plan(phase=Phase.PROCESS_CASE, visible_facts={"claim": {"days_until_appeal_deadline": 26}})
+        reply = "On file, you have 40 days left to appeal."
+        assert check_grounding(reply, plan)
+
+    def test_allows_grounded_iso_date(self, domain):
+        plan = make_plan(phase=Phase.PROCESS_CASE, visible_facts={"claim": {"appeal_deadline": "2026-03-18"}})
+        reply = "On file, the appeal deadline is 2026-03-18."
+        assert check_grounding(reply, plan) == []
+
+
+class TestCommitmentGuard:
+    def test_flags_promissory_language(self):
+        reply = "You will receive $1,450 once this is processed."
+        violations = check_commitment(reply)
+        assert any("promissory" in v for v in violations)
+
+    def test_flags_unattributed_sensitive_figure(self):
+        reply = "Your appeal deadline is 2026-03-18."
+        violations = check_commitment(reply)
+        assert any("unattributed" in v for v in violations)
+
+    def test_allows_attributed_figure(self):
+        reply = "On file, the appeal deadline is 2026-03-18."
+        assert check_commitment(reply) == []
+
+    def test_allows_attribution_in_preceding_sentence(self):
+        reply = "Let me check the record for you. It shows the allowed maximum is $1,450.00."
+        assert check_commitment(reply) == []
+
+    def test_allows_reply_with_no_sensitive_numbers(self):
+        reply = "I can help you with that once I verify a couple more details."
+        assert check_commitment(reply) == []
+
+    def test_worked_example_no_commitment_and_no_disclosure(self, domain):
+        """The brief's frustrated-caller example: the reply must not disclose
+        or promise anything (no visible_facts exist pre-verification)."""
+        plan = make_plan(phase=Phase.VERIFY_ID, visible_facts={})
+        reply = (
+            "I hear you, and I know repeating yourself is frustrating. I can't pull up claim details "
+            "until I verify a couple more things — that protects your information. Could you give me "
+            "your date of birth, or the last four digits of your SSN or national ID?"
+        )
+        assert check_disclosure(reply, domain, plan) == []
+        assert check_commitment(reply) == []
+
+
+class TestContractGuard:
+    def test_forbidden_case_id_blocks(self):
+        plan = make_plan(forbidden_elements=("any case id",))
+        blocking, missing = check_contract("Your claim CL-2048 was denied.", plan)
+        assert blocking
+
+    def test_forbidden_amount_blocks(self):
+        plan = make_plan(forbidden_elements=("any dollar amount",))
+        blocking, missing = check_contract("The allowed max is $1,450.00.", plan)
+        assert blocking
+
+    def test_no_forbidden_hit_when_absent(self):
+        plan = make_plan(forbidden_elements=("any case id", "any dollar amount"))
+        blocking, missing = check_contract("I can help you with that.", plan)
+        assert blocking == []
+
+    def test_missing_required_element_is_reported_not_blocking(self):
+        plan = make_plan(required_elements=("an offered alternative identity factor",))
+        blocking, missing = check_contract("I still need more information to verify you.", plan)
+        assert blocking == []  # required-element misses never block (§7.11 append-only)
+        assert "an offered alternative identity factor" in missing
+
+    def test_present_required_element_not_reported_missing(self):
+        plan = make_plan(required_elements=("an offered alternative identity factor",))
+        blocking, missing = check_contract("Could you give me your date of birth instead?", plan)
+        assert missing == []

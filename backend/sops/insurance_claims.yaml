@@ -23,15 +23,18 @@ escalation:
 
 # Tools available in every non-terminal phase, in addition to the phase's own
 # list (DESIGN.md §7.1: escalation is reachable from anywhere; it is not a
-# privilege that belongs to any one phase).
-always_available_tools: [transfer_to_human]
+# privilege that belongs to any one phase). request_consent is here (not
+# just under VERIFY_ID) because a representative's need for expanded consent
+# can surface anywhere after verification too — found via live testing, see
+# PROGRESS.md.
+always_available_tools: [transfer_to_human, request_consent]
 
 phases:
   - id: VERIFY_ID
     freedom: STRICT
     stream: buffered              # replies are 1-3 sentences; buffering costs nothing visible (§7.11)
     model_tier: fast              # short, templated-leaning replies; escalate to strong only if needed
-    tools: [request_consent]      # representative-consent path (§7.10); everything else is conversational
+    tools: []                     # request_consent is global (always_available_tools, below)
     base_directives: [VERIFY_RATIONALE, NO_DISCLOSURE]
 
   - id: RESOLVE_INTENT
@@ -45,14 +48,23 @@ phases:
     freedom: OPEN
     stream: sentence_gated
     model_tier: strong
-    tools: [get_case_detail, get_document_guidance, get_alternatives, create_followup]
+    # NOTE: get_case_detail / get_document_guidance / get_alternatives are
+    # described in DESIGN.md §6 as pseudo-tools for explicit citation. For
+    # this build they are simplified to direct-context injection (already in
+    # visible_facts) + guard-enforced grounding, to avoid a real tool-use
+    # round trip for data that's already local — see PROGRESS.md. Only the
+    # genuine side effect is a real tool here.
+    tools: [create_followup]
     base_directives: [GROUNDING_ONLY, NO_COMMITMENT, ALTERNATIVE_LADDER_FIRST]
 
   - id: POST_PROCESS
     freedom: OPEN
     stream: sentence_gated
     model_tier: strong
-    tools: [prepare_summary, send_summary_email]
+    # prepare_summary is likewise simplified to a deterministic draft built
+    # from structured state (DESIGN.md §7.7) and injected into visible_facts
+    # directly, rather than a callable tool.
+    tools: [send_summary_email]
     base_directives: [OFFER_SUMMARY, CONSENT_REQUIRED, SEND_TO_FILE_ADDRESS_ONLY]
 
   - id: HUMAN_HANDOFF

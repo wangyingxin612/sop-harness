@@ -29,6 +29,24 @@ def merge_case_hints(hints: list[CaseHint]) -> CaseHint:
     return merged
 
 
+# Resolved intent -> the status it deterministically implies, used only to
+# help narrow candidates (never to grant access). Found via live testing: a
+# caller who asks "why was it denied" has, in effect, stated status=denied
+# even if that exact word from the caller's own mouth was never captured as
+# a case_hint — see PROGRESS.md.
+_INTENT_IMPLIED_STATUS = {
+    "denial_question": "denied",
+    "appeal_request": "denied",
+}
+
+
+def apply_intent_inference(hint: CaseHint, resolved_intent: str | None) -> CaseHint:
+    if hint.status or not resolved_intent:
+        return hint
+    implied = _INTENT_IMPLIED_STATUS.get(resolved_intent)
+    return replace(hint, status=implied) if implied else hint
+
+
 def resolve_candidates(
     claims: list[ClaimRecord], hint: CaseHint, now: date
 ) -> list[ClaimRecord]:

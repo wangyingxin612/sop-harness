@@ -15,7 +15,7 @@ import copy
 
 from app.sop.domain import DomainContext
 from app.sop.gates import evaluate_identity_gate
-from app.sop.intent import merge_case_hints, resolve_candidates
+from app.sop.intent import apply_intent_inference, merge_case_hints, resolve_candidates
 from app.sop.policy import resolve
 from app.sop.spec import SopSpec
 from app.sop.types import (
@@ -125,6 +125,7 @@ def _try_narrow_intent_candidate(state: SessionState, domain: DomainContext) -> 
     memory = state.memory
     facts = state.facts
     merged_hint = merge_case_hints(memory.case_hints)
+    merged_hint = apply_intent_inference(merged_hint, memory.resolved_intent)
     candidates = resolve_candidates(domain.claims_for_party(facts.verified_party_id), merged_hint, domain.now)
     if len(candidates) == 1:
         memory.candidate_case_id = candidates[0].case_id
@@ -135,7 +136,17 @@ def _resolve_intent_phase_transition(
 ) -> Phase:
     memory = state.memory
 
-    # A candidate is already on the table awaiting confirmation.
+    # Narrow FIRST, then check confirmation — not the other way around. A
+    # hint recorded on a PRIOR turn (deferred perception, §7.3/§7.11) often
+    # becomes available on the exact same turn the caller confirms it (e.g.
+    # "yes, that's the one" right after the agent proposes a claim it just
+    # became able to name). Checking confirmation before narrowing drops
+    # that turn's "yes" on the floor — caught by live testing, not by the
+    # pure-signals unit tests, which happened to always narrow and confirm
+    # on separate turns. See PROGRESS.md.
+    if memory.candidate_case_id is None:
+        _try_narrow_intent_candidate(state, domain)
+
     if memory.candidate_case_id is not None:
         if signals.confirms_proposed_case is True:
             memory.confirmed_case_id = memory.candidate_case_id
@@ -144,12 +155,11 @@ def _resolve_intent_phase_transition(
             return Phase.PROCESS_CASE
         if signals.confirms_proposed_case is False:
             memory.candidate_case_id = None
-            # fall through to re-disambiguate below
+            _try_narrow_intent_candidate(state, domain)  # re-narrow in case later hints changed the picture
 
-    _try_narrow_intent_candidate(state, domain)
-    # 0 or >1 candidates after narrowing: stay in RESOLVE_INTENT; policy.py
-    # exposes the index-only candidate list so the model can ask a
-    # disambiguating question (DESIGN.md §5.3).
+    # 0 or >1 candidates: stay in RESOLVE_INTENT; policy.py exposes the
+    # index-only candidate list so the model can ask a disambiguating
+    # question (DESIGN.md §5.3).
     return Phase.RESOLVE_INTENT
 
 

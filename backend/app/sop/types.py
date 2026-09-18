@@ -120,6 +120,7 @@ class Memory:
     contact_change_requests: list[dict] = field(default_factory=list)  # §7.12 — never auto-applied
     anomalies: list[dict] = field(default_factory=list)               # contradicting post-gate info
     consent_events: list[dict] = field(default_factory=list)          # §7.2 action-gate evidence
+    followup_notes: list[str] = field(default_factory=list)           # from create_followup tool calls
 
     def set_identity_factor(self, factor_type: str, slot: Slot) -> None:
         existing = self.identity_slots.get(factor_type)
@@ -293,6 +294,9 @@ class SessionState:
     facts: SessionFacts = field(default_factory=SessionFacts)
     transcript: list[Turn] = field(default_factory=list)
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    # Selects a fixture scenario from consent_scenarios.json — a demo/test
+    # knob (DESIGN.md §7.10), not something a real caller controls.
+    consent_scenario: str = "default"
 
     def next_turn_index(self) -> int:
         return len(self.transcript)

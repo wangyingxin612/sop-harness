@@ -1,0 +1,125 @@
+"""Side-effect handlers for tool calls (DESIGN.md Appendix A: executed
+synchronously, after the guard, before the turn is emitted — except
+`request_consent`, which polls asynchronously by design).
+
+Every handler mutates the `state` it is given directly. By the time these
+run, `state` is the orchestrator's own working copy for this turn (already
+produced by `machine.transition`), so mutating in place here is safe and
+matches Appendix A's timing note.
+"""
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from pathlib import Path
+
+from app.sop.domain import DomainContext
+from app.sop.summary import build_summary_draft
+from app.sop.types import ConsentStatus, Phase, SessionState
+
+
+@dataclass
+class ToolEffectResult:
+    tool_name: str
+    tool_use_id: str
+    output: dict          # returned to the model as a tool_result, if the call continues
+    summary_for_trace: str
+
+
+def load_consent_scenarios(path: str | Path) -> dict:
+    return json.loads(Path(path).read_text())
+
+
+def handle_transfer_to_human(state: SessionState, tool_input: dict, tool_use_id: str) -> ToolEffectResult:
+    reason = tool_input.get("reason", "caller requested or agent-initiated transfer")
+    if state.phase not in (Phase.HUMAN_HANDOFF,):
+        state.phase = Phase.HUMAN_HANDOFF
+        state.facts.escalation_reason = "agent_initiated_transfer"
+    return ToolEffectResult(
+        tool_name="transfer_to_human",
+        tool_use_id=tool_use_id,
+        output={"status": "transferring", "reason": reason},
+        summary_for_trace=f"transfer_to_human({reason!r})",
+    )
+
+
+def handle_create_followup(state: SessionState, tool_input: dict, tool_use_id: str) -> ToolEffectResult:
+    note = tool_input.get("note", "").strip()
+    if note:
+        state.memory.followup_notes.append(note)
+    return ToolEffectResult(
+        tool_name="create_followup",
+        tool_use_id=tool_use_id,
+        output={"status": "recorded"},
+        summary_for_trace=f"create_followup({note!r})",
+    )
+
+
+def handle_request_consent(
+    state: SessionState, tool_input: dict, tool_use_id: str, consent_scenarios: dict
+) -> ToolEffectResult:
+    """Simulates an asynchronous consent check (DESIGN.md §7.10) against
+    consent_scenarios.json. Each call advances one poll step; the `default`
+    scenario approves on the 2nd poll, `timeout` never approves and reports
+    TIMED_OUT once the sequence is exhausted — the graceful-degradation
+    branch the brief's fixtures were clearly built to exercise."""
+    facts = state.facts
+    scenario = consent_scenarios.get(state.consent_scenario, consent_scenarios["default"])
+    sequence = scenario["status_sequence"]
+    facts.consent_poll_count += 1
+    idx = min(facts.consent_poll_count - 1, len(sequence) - 1)
+    raw_status = sequence[idx]
+
+    if raw_status == "approved":
+        facts.consent_status = ConsentStatus.APPROVED
+    elif facts.consent_poll_count >= len(sequence):
+        facts.consent_status = ConsentStatus.TIMED_OUT
+    else:
+        facts.consent_status = ConsentStatus.PENDING
+
+    return ToolEffectResult(
+        tool_name="request_consent",
+        tool_use_id=tool_use_id,
+        output={"status": facts.consent_status.value, "poll_count": facts.consent_poll_count},
+        summary_for_trace=f"request_consent() -> {facts.consent_status.value}",
+    )
+
+
+def handle_send_summary_email(
+    state: SessionState, tool_input: dict, tool_use_id: str, domain: DomainContext
+) -> ToolEffectResult:
+    facts = state.facts
+    memory = state.memory
+    just_approved = bool(memory.consent_events) and memory.consent_events[-1].get("decision") == "approved"
+    if not just_approved and not facts.email_sent:
+        # Defensive: the directive layer only offers this path when consent
+        # was just given, but a guard/handler-level check costs nothing and
+        # means a malformed tool call can never send without consent.
+        return ToolEffectResult(
+            tool_name="send_summary_email",
+            tool_use_id=tool_use_id,
+            output={"status": "blocked", "reason": "no recorded consent for this turn"},
+            summary_for_trace="send_summary_email() blocked: no consent event",
+        )
+    draft = build_summary_draft(state, domain)
+    facts.email_sent = True
+    return ToolEffectResult(
+        tool_name="send_summary_email",
+        tool_use_id=tool_use_id,
+        output={"status": "sent", "to": draft.recipient_email, "summary": draft.as_dict()},
+        summary_for_trace=f"send_summary_email() -> sent to {draft.recipient_email}",
+    )
+
+
+def execute_tool_call(
+    name: str, tool_input: dict, tool_use_id: str, state: SessionState, domain: DomainContext, consent_scenarios: dict
+) -> ToolEffectResult | None:
+    if name == "transfer_to_human":
+        return handle_transfer_to_human(state, tool_input, tool_use_id)
+    if name == "create_followup":
+        return handle_create_followup(state, tool_input, tool_use_id)
+    if name == "request_consent":
+        return handle_request_consent(state, tool_input, tool_use_id, consent_scenarios)
+    if name == "send_summary_email":
+        return handle_send_summary_email(state, tool_input, tool_use_id, domain)
+    return None  # record_signals is handled separately (deferred perception, not a side effect)

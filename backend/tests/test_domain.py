@@ -1,6 +1,8 @@
 from datetime import date
 
 from app.sop.domain import build_claim_view, load_claims, month_from_time_ref
+from app.sop.intent import apply_intent_inference
+from app.sop.types import CaseHint
 
 
 def test_month_from_time_ref():
@@ -64,3 +66,24 @@ def test_claims_for_party_filters_correctly(domain):
     claims = domain.claims_for_party("P9")
     assert {c.case_id for c in claims} == {"CL-2048", "CL-2011", "CL-1899", "CL-2102"}
     assert domain.claims_for_party("nonexistent") == []
+
+
+class TestIntentInference:
+    """Found via live testing (PROGRESS.md): a caller who asks 'why was it
+    denied' has implied status=denied even without saying that word."""
+
+    def test_denial_question_implies_denied_status_when_absent(self):
+        hint = apply_intent_inference(CaseHint(case_type="healthcare"), "denial_question")
+        assert hint.status == "denied"
+
+    def test_explicit_status_is_not_overridden(self):
+        hint = apply_intent_inference(CaseHint(status="open"), "denial_question")
+        assert hint.status == "open"
+
+    def test_unrelated_intent_does_not_infer_status(self):
+        hint = apply_intent_inference(CaseHint(case_type="healthcare"), "status_inquiry")
+        assert hint.status is None
+
+    def test_no_intent_leaves_hint_unchanged(self):
+        hint = apply_intent_inference(CaseHint(case_type="healthcare"), None)
+        assert hint.status is None

@@ -25,7 +25,7 @@ def test_process_case_is_open_and_sentence_gated(spec):
     p = spec.phase_spec(Phase.PROCESS_CASE)
     assert p.freedom == "OPEN"
     assert p.stream == StreamPolicy.SENTENCE_GATED
-    assert "get_case_detail" in p.tools
+    assert "create_followup" in p.tools
 
 
 def test_identity_config_matches_matcher_constants(spec):

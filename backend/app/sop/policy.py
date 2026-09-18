@@ -15,9 +15,11 @@ from __future__ import annotations
 import hashlib
 
 from app.sop.domain import DomainContext
-from app.sop.intent import index_view, merge_case_hints, resolve_candidates
+from app.sop.intent import apply_intent_inference, index_view, merge_case_hints, resolve_candidates
 from app.sop.spec import SopSpec
 from app.sop.types import (
+    CallerRole,
+    ConsentStatus,
     Directive,
     Phase,
     ScopeRing,
@@ -25,6 +27,14 @@ from app.sop.types import (
     StreamPolicy,
     Tier,
     TurnPlan,
+)
+
+# DESIGN.md §7.10: minimum-necessary fields visible to a representative who
+# has not (yet) had consent recorded for full disclosure. Actionable
+# (documents/deadline) stays visible; narrative and financial detail does not.
+_REDUCED_SCOPE_CLAIM_FIELDS = (
+    "case_id", "case_type", "status", "created_at", "documents_needed",
+    "appeal_deadline", "days_until_appeal_deadline", "appeal_deadline_passed",
 )
 
 # --- directives the engine itself owns (not vertical-specific; DESIGN.md §6
@@ -197,6 +207,7 @@ def resolve(state: SessionState, domain: DomainContext, spec: SopSpec) -> TurnPl
 
     elif phase == Phase.RESOLVE_INTENT:
         merged_hint = merge_case_hints(memory.case_hints)
+        merged_hint = apply_intent_inference(merged_hint, memory.resolved_intent)
         candidates = resolve_candidates(domain.claims_for_party(facts.verified_party_id), merged_hint, domain.now)
         forbidden = ["denial reason", "documents needed", "any dollar amount"]
 
@@ -214,32 +225,47 @@ def resolve(state: SessionState, domain: DomainContext, spec: SopSpec) -> TurnPl
     elif phase == Phase.PROCESS_CASE:
         active_id = memory.active_case_id or memory.confirmed_case_id
         view = domain.view(active_id) if active_id else None
+        reduced_scope = (
+            facts.caller_role == CallerRole.REPRESENTATIVE
+            and facts.consent_status != ConsentStatus.APPROVED
+        )
         if view:
             claim = view.record
-            visible_facts = {
-                "claim": {
-                    "case_id": claim.case_id,
-                    "case_type": claim.case_type,
-                    "status": claim.status,
-                    "created_at": claim.created_at,
-                    "summary": claim.summary,
-                    "denial_reason": claim.denial_reason,
-                    "documents_needed": list(claim.documents_needed),
-                    "appeal_deadline": claim.appeal_deadline,
-                    "expected_reimbursement_amount": claim.expected_reimbursement_amount,
-                    "allowed_max_amount": claim.allowed_max_amount,
-                    "net_pay": claim.net_pay,
-                    "net_fee": claim.net_fee,
-                    # pre-computed derivations (DESIGN.md §7.4 — the model does no arithmetic)
-                    "unpaid_balance": view.unpaid_balance,
-                    "days_until_appeal_deadline": view.days_until_appeal_deadline,
-                    "appeal_deadline_passed": view.appeal_deadline_passed,
-                },
-                "guidance": _gather_guidance(domain, claim),
+            full_claim = {
+                "case_id": claim.case_id,
+                "case_type": claim.case_type,
+                "status": claim.status,
+                "created_at": claim.created_at,
+                "summary": claim.summary,
+                "denial_reason": claim.denial_reason,
+                "documents_needed": list(claim.documents_needed),
+                "appeal_deadline": claim.appeal_deadline,
+                "expected_reimbursement_amount": claim.expected_reimbursement_amount,
+                "allowed_max_amount": claim.allowed_max_amount,
+                "net_pay": claim.net_pay,
+                "net_fee": claim.net_fee,
+                # pre-computed derivations (DESIGN.md §7.4 — the model does no arithmetic)
+                "unpaid_balance": view.unpaid_balance,
+                "days_until_appeal_deadline": view.days_until_appeal_deadline,
+                "appeal_deadline_passed": view.appeal_deadline_passed,
             }
-        if facts.caller_role.value == "representative":
+            if reduced_scope:
+                visible_facts = {
+                    "claim": {k: v for k, v in full_claim.items() if k in _REDUCED_SCOPE_CLAIM_FIELDS},
+                    "disclosure_note": (
+                        "Representative without recorded policyholder consent: status and actionable "
+                        "next steps only. Denial narrative and dollar amounts are withheld until consent "
+                        "is recorded via request_consent."
+                    ),
+                }
+            else:
+                visible_facts = {"claim": full_claim, "guidance": _gather_guidance(domain, claim)}
+        if facts.caller_role == CallerRole.REPRESENTATIVE:
             directives.append(REPRESENTATIVE_SCOPE_NOTE)
         forbidden = ["any amount or date not present in the claim data provided this turn"]
+        if reduced_scope:
+            forbidden = [*forbidden, "the denial narrative", "any dollar amount", "SSN or ID digits"]
+            required = [*required, "an offer to request the policyholder's consent for full detail, if not already declined"]
 
     elif phase == Phase.POST_PROCESS:
         active_id = memory.active_case_id or memory.confirmed_case_id

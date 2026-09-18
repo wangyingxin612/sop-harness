@@ -118,9 +118,12 @@ class TestFreedomLevel:
             spec,
         )
         state, plan = decide(state, signals(confirms_proposed_case=True, turn_index=1), domain, spec)
-        assert "get_case_detail" in plan.allowed_tools
-        assert "get_document_guidance" in plan.allowed_tools
+        # get_case_detail/get_document_guidance are pseudo-tools simplified to
+        # direct visible_facts injection (see sops/insurance_claims.yaml); the
+        # tool actually registered here is the genuine side effect.
         assert "create_followup" in plan.allowed_tools
+        assert "claim" in plan.visible_facts
+        assert "guidance" in plan.visible_facts
 
     def test_transfer_to_human_always_available_in_nonterminal_phases(self, domain, spec):
         state = make_state()
