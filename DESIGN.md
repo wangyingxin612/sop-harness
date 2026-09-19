@@ -51,6 +51,23 @@ brief, how it is prioritised, and how it is measured. §11 is what is *not* solv
 
 ---
 
+### Verifying the claims in this document
+
+Every number here is produced by a command in the repo, not written by hand. Four minutes, no API key
+needed for the first two:
+
+```bash
+make independence   # ~10s, $0  — the thesis test, plus 5 static architecture claims
+make test           # ~5s,  $0  — 302 unit tests, zero model calls
+make eval           # ~6min, ~$0.72 — 16 scenarios against the live model
+cat backend/evals/reports/{attribution,coverage,architecture}.json
+```
+
+`/api/evals/report` renders the same data as a page. Where a claim is *not* met, §11 says so — and
+§8.8 records two requirements that were passing for the wrong reason until a report caught them.
+
+---
+
 ## 1. Context and problem
 
 ### 1.1 The business setting
@@ -74,20 +91,29 @@ general assistant:
 | **Prompt-only LLM agents** | Rules are requests, not guarantees. Unverifiable, unauditable, and — as Chevrolet of Watsonville learned in Dec 2023 — capable of making commitments the business is then argued to be bound by. |
 | **Human agents** | Correct and empathetic, but expensive, and inconsistent on procedure adherence under time pressure. |
 
-### 1.3 What the brief asks for, and where each requirement is handled
+### 1.3 What the brief asks for, where it is handled, and what proves it
 
-| # | Requirement | Where |
-|---|---|---|
-| R1 | Fixed 4-phase workflow: `VERIFY_ID → RESOLVE_INTENT → PROCESS_CASE → POST_PROCESS` | §7.1 |
-| R2 | **Different freedom per step** — strict where the SOP demands, free where reasoning helps | §6 (`freedom` is a spec field) |
-| R3 | No claim disclosure before identity is verified on **≥3 PII factors** | §7.1, §7.2 |
-| R4 | Still converse naturally during a gate: clarification, partial answers, refusals, alternate ID fields | §7.3, §7.4 |
-| R5 | Freer reasoning in `RESOLVE_INTENT` / `PROCESS_CASE`: messy language, ambiguity, grounded follow-ups, bounded paths | §7.5, §7.6 |
-| R6 | `POST_PROCESS` offers an email summary (discussion, status/outcome, next steps); the customer **chooses** send or skip | §7.2 (action gate), §7.6 |
-| R7 | In-scope answers only; polite refusal; offer a human on repeated off-topic attempts | §7.9 |
-| R8 | **Remember information stated out of phase** and reuse it later | §7.3 |
-| R9 | *Bonus*: recognise frustration, de-escalate, explain why gates exist, persuade without bypassing, offer alternatives, know when to stop | §7.8 |
-| R10 | Delivery: hosted URL or Docker, API token config, test UI, full workflow demo | §10 |
+Three columns rather than one, because "where is it implemented" and "how would you know it still
+works" are different questions, and only the second survives a refactor. Every reference below is a
+real path in this repo.
+
+| # | Requirement | Design | Implementation | Evidence |
+|---|---|---|---|---|
+| R1 | Fixed 4-phase workflow `VERIFY_ID → RESOLVE_INTENT → PROCESS_CASE → POST_PROCESS` | §7.1 | `sops/insurance_claims.yaml`, `app/sop/machine.py` | `tests/test_state_machine.py`; invariant `phase_order_valid` |
+| R2 | **Different freedom per step** | §6 | `freedom` field per phase in the SOP spec | `tests/test_spec_loader.py`, `tests/test_bank_kyc_spec.py` |
+| R3 | No claim disclosure before **≥3 PII factors** | §7.1–7.2 | `policy.resolve()` assembles `visible_facts` per phase — the data is *absent*, not forbidden | attribution claim `R1_no_case_data_in_context_before_verification` (8/8); `TestDisclosureScoping`; scenario `04_impostor_never_verifies` |
+| R4 | Converse naturally *during* a gate: clarification, partial answers, refusals, alternate ID fields | §7.3–7.4 | `OFFER_ALTERNATIVE_FACTORS`, `STATE_FACTORS_REMAINING`, slot `superseded_by` | scenarios `08_self_correction_dob`, `02_frustrated_caller_bonus`; `tests/test_identity_matcher.py` |
+| R5 | Freer reasoning in `RESOLVE_INTENT` / `PROCESS_CASE` | §7.5–7.6 | `freedom: OPEN`, grounded `visible_facts`, bounded tools | scenarios `07_ambiguous_intent_disambiguation`, `09_alternative_ladder_missing_document`, `16_verified_caller_with_no_claims` |
+| R6 | `POST_PROCESS` offers an email summary; customer **chooses** send or skip | §7.2, §7.7 | action gate + consent event; `SEND_AND_CLOSE` | attribution `R7_send_is_commanded_not_volunteered` (3/3); scenarios `13_full_call_to_close`, `14_decline_then_close` |
+| R7 | In-scope only; polite refusal; human after repeated attempts | §7.9 | scope ring + **templated** refusals (no prompt to negotiate with) + strike decay | attribution `refusals_are_templated_not_generated`; scenario `03_off_topic_persistence`; invariant `out_of_scope_declined_not_advanced` |
+| R8 | **Remember out-of-phase information** and reuse it later | §7.3 | extraction is unconditional and phase-independent — there is no extractor that *could* miss the hint | scenario `01_margaret_chen_happy_path` (the brief's own example); `tests/test_extraction_parsing.py` |
+| R9 | *Bonus*: recognise frustration, de-escalate, explain the gate, persuade without bypassing, know when to stop | §7.8 | deterministic intensity floor → `ACKNOWLEDGE_EMOTION`; persuasion ladder before any transfer | attribution `R9_empathy_is_instructed_when_the_caller_is_upset`; `tests/test_emotion_floor.py`; scenario `02_frustrated_caller_bonus` |
+| R10 | Delivery: hosted URL or Docker, API token config, test UI, full workflow demo | §10 | `Dockerfile`, `fly.toml`, per-session key in the UI | README quickstart; hosted at `sop-harness-demo.fly.dev` |
+
+Two of these were satisfied *by the model's good behaviour rather than by the harness* until the
+attribution report said so — R6's send directive never fired once, and R9's empathy was the model
+being polite. Both now appear in the evidence column with a mechanism behind them. §8.8 tells that
+story, because a requirements table that only ever shows green is not evidence of anything.
 
 ### 1.4 Goals
 
@@ -554,25 +580,31 @@ Provenance pays for itself three times: it drives the inspector (§8.1), it sati
 `superseded_by` handles self-correction — *"I was born in 1985 — sorry, 1986"* — the single most commonly
 missed case in identity collection.
 
-**Perception is split by *latency criticality*, not by content type.** The question is not "facts vs.
-signals" — it is **does this signal change *this* turn's TurnPlan?**
+**Perception is ONE blocking call, and that is a correction.**
 
-| | **Blocking perception** | **Deferred perception** |
-|---|---|---|
-| Contents | scope ring, explicit escalation request, and — only while a phase gate is open — identity factors | case hints, intent refinement, emotion nuance, provenance enrichment |
-| Why | decides refusal / escalation / gate outcome **now** | affects later turns only |
-| Schema | small | large |
+An earlier version split it by *latency criticality*: a small blocking schema for what decides this
+turn (scope, escalation request, identity factors), and everything else — case hints, intent, emotion,
+contact-change requests — riding for free on `ACT`'s structured output, since the strong model already
+held the transcript. Zero extra requests, zero duplicated input tokens. The reasoning was sound and
+the result was wrong, in two ways that only showed up under measurement:
 
-**Deferred perception costs no extra call: `ACT` emits it.** The strong model already holds the full
-transcript, so its structured output carries `memory_updates` alongside `reply`, `tool_calls` and
-`rationale` — zero additional requests, zero duplicated input tokens.
+1. **The deferred half described the *previous* turn.** By the time `DECIDE` could read emotional
+   intensity, it was one turn stale. So `ACKNOWLEDGE_EMOTION` never fired on the turn a caller was
+   actually upset — R9's empathy was real in the transcripts and was coming from the model's manners,
+   not from the harness. The attribution report (§8.8) found this; no transcript review would have,
+   because the replies looked fine.
+2. **It put a second JSON payload in ACT's token budget.** Live runs showed replies truncated and
+   tool calls dropped when a turn had to carry a reply *and* a large `record_signals` call.
 
-This resolves a tension in an earlier draft. We had rejected splitting extraction because two calls would
-duplicate the transcript and double input cost. That objection holds for a split **by content type**; it
-does not hold for a split **by blocking-ness**, because the non-blocking half rides inside a call we were
-already making. The saving lands where latency hurts most: in `PROCESS_CASE` the blocking schema is two
-booleans and an enum, while `VERIFY_ID` — where the schema stays large — produces replies of one to three
-sentences anyway.
+Every field there was a reading of the **caller's message**, so it belongs in the call that reads the
+caller's message. `ACT` now returns only the thing it alone can know — why the model chose the reply it
+chose. The right way to make perception cheap is a cheaper call (fast tier, tight schema), not an
+asynchronous one.
+
+The general lesson is worth more than the fix: **a performance split that moves a signal across a turn
+boundary is a correctness change wearing a performance costume.** It cost a requirement, and the patch
+for it (a deterministic intensity floor) was initially a *third* mechanism papering over the gap rather
+than closing it.
 
 **DECIDE is total over partial input.** Every signal has a defined default, and every default fails toward
 *more turns*, never toward *more access*:
@@ -599,7 +631,7 @@ sharply: we do not *trust* an extraction, we *test it as a hypothesis* against t
 accuracy therefore determines **how many turns verification takes**, not **whether it is correct**.
 
 **Tier selection is a measurement with a pre-committed decision rule.** A ~60-utterance golden set
-(partial answers, self-correction, spoken dates, ASR noise, code-switching) scores per-field recall on the
+(partial answers, self-correction, typo noise, code-switching) scores per-field recall on the
 fast and strong tiers. **Any gate-relevant field below 0.98 recall moves to the strong tier.** Recall
 dominates precision here: a missed factor costs a turn, while a wrong one is rejected by the matcher.
 
@@ -806,7 +838,7 @@ denial reason is not disclosed, because it is not in the context window.
 
 ### 7.9 VERIFY — the output guard, and abuse control
 
-One guard, four rule families (one place to log, one place to test):
+One guard, five rule families (one place to log, one place to test):
 
 | Rule | Type | Checks |
 |---|---|---|
@@ -1158,7 +1190,8 @@ so long replies simply reveal faster.
 What remains is real and structural: PERCEIVE and ACT are two sequential model calls, and DECIDE
 depends on PERCEIVE, so they cannot be parallelised without giving up the property that makes the
 whole design work — the plan is computed before generation, not repaired afterwards. This is the
-honest cost of the architecture, and §7.11's deferred-perception split already pays part of it down.
+honest cost of the architecture. §7.3 explains why the obvious way to pay it down — making one of
+them asynchronous — was tried and reverted.
 
 **"That's it, thanks" was being forgotten.** The wrap-up signal was read off the current turn only:
 it moved the call into POST_PROCESS and was then discarded. The caller was offered a summary,
@@ -1276,7 +1309,7 @@ scores empathy, naturalness and clarity, reported separately from the invariants
 one is a guarantee and the other is a preference.
 
 Two suites beyond the happy path: **adversarial** (jailbreak, social engineering, salami slicing, wrong
-PII, emotional escalation, off-topic persistence) and **ASR-noise** — because `claim_schema.json` describes
+PII, emotional escalation, off-topic persistence) and **typo-noise** — because a support chat receives
 "the insurance **audio** agent demo", meaning the real product is voice. We therefore test
 `"four four seven two"`, `"Margret Chan"`, `"P-O-L nine nine two one"` and report the verification-success
 gap against clean text. That also explains fixture details that otherwise look arbitrary: the alias
@@ -1308,7 +1341,7 @@ wall of stalled verifications when in fact nobody said anything.
 
 ### 8.6 Eval report — written for the person who signs off
 
-Nobody deploys an agent that touches protected health information on the strength of "12/12 scenarios
+Nobody deploys an agent that touches protected health information on the strength of "16/16 scenarios
 passed". The person who signs off is a compliance or operations lead, and their question is narrower
 and harder: *which specific things can this system not do, and how do you know?*
 
@@ -1379,7 +1412,7 @@ model change and the other does not.
 This project has the example that justifies the whole idea. **`SEND_NOW` — the directive instructing
 the agent to send the summary email — never fired once, for the entire build.** A comparison against
 the wrong turn index made its condition permanently false. The email went out anyway, because the model
-saw `pending_action` in `visible_facts` and volunteered the tool call. 12/12 scenarios green, eight
+saw `pending_action` in `visible_facts` and volunteered the tool call. Every scenario green, nine
 invariants holding, and the control plane doing nothing at all. That is precisely the failure this
 architecture exists to prevent.
 
@@ -1469,7 +1502,7 @@ four-day budget.
 | **P2** | Second SOP (`bank_kyc.yaml`) + live switch | Cheap once §6 is real, and it is the whole generality argument | D4 — **done, honestly scoped**: proves the control layer (spec.py/machine.py — phases, gates, freedom, tool permissions, escalation, directives) has zero insurance-specific code, checked by `tests/test_bank_kyc_spec.py` including a static import-graph assertion. Does **not** yet prove the full runtime is pluggable — `policy.py`'s visible-facts assembly still calls insurance-shaped domain functions, so a `bank_kyc` session verifies identity correctly and then reads insurance fixture data past that point. A real second vertical additionally needs a small pluggable domain-adapter interface (the "DOMAIN ADAPTER" box in §5.1 was already drawn separately from "SOP SPEC" for this reason) — that abstraction is scoped, not built. |
 | **P2** | Replay / time-travel debugging | Strong engineering signal; small once tracing exists | D4 |
 | **P2** | LLM judge for empathy/naturalness | Needed to claim R9 quantitatively rather than by demo | D3 |
-| **P2** | ASR-noise eval axis | Very cheap, and shows we read the fixtures as a product spec | D3 |
+| **P2** | Typo-noise eval axis | Very cheap, and it tests the channel this product actually has | D3 |
 | **P2** | Extraction golden set + fast-vs-strong tier benchmark | Turns the tier choice from an assumption into a measurement | D3 |
 | **P2** | `reset` / `step` RL-environment adapter | ~40 lines over the eval runner; sets up §12 | D4 |
 | **P3** | SOP compiled from a customer's existing SOP document | The real unlock for "accessible" (§12 Stage 2) | — |
@@ -1489,7 +1522,7 @@ Design review removed six things we had designed ourselves. Recorded because the
 | ~12 explicit sub-state enums | **One: `pending_action`** | Nearly all were derivable (`MISMATCH` is `mismatch_count > 0`). Only a pending irreversible action must be stored, because an action gate has to remember what it is gating. |
 | Two parallel extraction calls | **One** | Input tokens dominate; duplicating the transcript for a negligible latency win is the wrong trade (§7.3). |
 | A separate injection detector | **A label on the scope classifier** | It was never the defence, so it does not deserve to be a component. |
-| A separate commitment detector | **A rule family inside the single output guard** | One guard with four rule families beats four guards: one place to log, one to test. |
+| A separate commitment detector | **A rule family inside the single output guard** | One guard with five rule families beats five guards: one place to log, one to test. |
 | SQLite session store | **In-memory + append-only JSONL behind a `SessionStore` interface** | Nothing here needs relational queries; the interface keeps the door open at zero cost. |
 
 > Inventing is half the work. The other half is noticing which of your inventions were ceremony.
@@ -1522,7 +1555,7 @@ describing one concept, with a silent `.get()` between them.
 | Two tables | What silently stopped working |
 |---|---|
 | `policy.py` element strings ↔ guard matchers | **11 of 20** contract elements were never checked, including R8's send-to-file-address-only rule |
-| `escalation_reason` ↔ disposition codes ↔ handoff guidance | A disposition code that could never be reached; off-topic persistence counted as a transfer when it terminates |
+| end reason ↔ disposition codes ↔ handoff guidance | A disposition code that could never be reached; off-topic persistence counted as a transfer when it terminates |
 | directive emitted ↔ behaviour enforced | `SEND_NOW` never fired for the whole project |
 | client event names ↔ metrics sink | A renamed event reads as zero forever, indistinguishable from "never happens" |
 
@@ -1553,8 +1586,18 @@ Stated plainly; a design document that lists none is not credible.
    — which is why §12's Stage 2 generates the eval suite from the same source as the spec.
 5. **Emotion calibration is measured, not solved.** We report inter-rater agreement on a hand-labelled set
    rather than an accuracy figure the task does not support.
-6. **Fixture-scale data.** Four policyholders and five claims exercise the logic but not retrieval at
+6. **Fixture-scale data.** Four policyholders and six claims exercise the logic but not retrieval at
    scale; nothing here addresses ranking over thousands of claims.
+7. **The data plane is not yet pluggable.** `bank_kyc.yaml` proves the *spec* layer carries no insurance
+   assumptions; `policy.py` still calls insurance-shaped functions to assemble `visible_facts`. §6's
+   claim is therefore half-demonstrated, and §13.4 is the work that would finish it.
+8. **Output-scope enforcement is a heuristic floor.** §7.9's fifth rule catches prose with no procedural
+   anchor; a fluent, on-register, subtly out-of-scope answer would pass it.
+9. **The adversary is a fixed rotation.** §8.7 establishes that the floor holds against a known set of
+   attacks, not that it is unbreakable.
+10. **Four directives are `advisory`** — nothing enforces them (§7.4). They shape tone and cost nothing
+    if ignored, but they are the part of the SOP that is still hope rather than mechanism, and the
+    count is published for exactly that reason.
 
 ---
 
@@ -1590,6 +1633,47 @@ And here the two halves of the mission turn out to be one mechanism:
 Frontier capability at launch, distilled cost at scale, and gates that let you move between them without a
 behavioural regression — accessible and affordable, out of one artifact.
 
+## 13. What I would do next
+
+Ordered by what changes a decision, not by effort. The first three are the ones I would defend as
+necessary before a pilot; the rest are the product.
+
+**1. Make the simulator coverage-directed.** It explores by personality today. Pointing it at
+transitions the suite has never reached closes the loop between §8.9 and §6 — the harness would then
+find its own blind spots instead of waiting for a human to wander into one. Everything needed is
+already built; this is wiring.
+
+**2. An adaptive adversary.** The hostile model (§8.7) is a fixed rotation, so it establishes that the
+floor holds against a *known* set of attacks. A red-team loop that searches for the weakest rule —
+and, better, one seeded from the `advisory` directives, since those are where the harness admits it is
+not enforcing anything — would turn that into a stronger claim.
+
+**3. Output-scope enforcement above the heuristic floor.** §7.9's fifth rule catches prose with no
+procedural anchor. A fluent, on-register, subtly out-of-scope answer passes it. Closing that needs a
+classifier call per turn, which is a real cost; the decision is whether the vertical's risk justifies
+it, and that is a customer conversation rather than an engineering one.
+
+**4. The domain adapter.** `bank_kyc.yaml` proves the spec layer is generic and nothing more — the
+data plane still calls insurance-shaped functions. A `DomainContext` protocol plus one non-insurance
+fixture set would make §6's claim complete instead of half-demonstrated. This is the single biggest
+gap between what the architecture asserts and what it has shown.
+
+**5. The authoring loop (§12, stage 2).** Compiling a customer's existing SOP document into a draft
+spec *and* its eval suite. This is where the product stops being an engine and starts being something
+a business analyst can use, and it is the step that makes "accessible" real rather than aspirational.
+
+**6. Distillation on the flywheel (§12, stage 3).** Once a SOP has traffic, its gates are a
+programmatic reward function and the transcripts are a labelled dataset. The harness is already the RL
+environment; what is missing is the training loop and the evidence that a distilled model holds the
+same invariants — which §8.7 is exactly the instrument for.
+
+**What I would *not* do next:** add scenarios for their own sake, or close the remaining coverage gap
+(`KYC_DISCLOSURE_LIMITS`, unreachable without bank fixtures). The last round of work found one real
+bug, down from several per round — that is the signal that the productive seam has been worked out,
+and more of the same would grow the artifact without improving it.
+
+---
+
 ---
 
 ## Appendix A — Core types
@@ -1597,11 +1681,18 @@ behavioural regression — accessible and affordable, out of one artifact.
 ```python
 @dataclass
 class SessionState:
-    phase:          Phase            # 7 values
+    phase:          Phase            # 4 working + 3 terminal, all derived on exit
     pending_action: Action | None    # the only true sub-state (§9.3)
     memory:         Slots            # typed, with provenance + supersede
-    facts:          SessionFacts     # flat counters & flags
+    facts:          SessionFacts     # flat counters & flags, incl. `ended`
     transcript:     list[Turn]
+
+@dataclass(frozen=True)
+class EndState:                      # §10.5 — the single authored fact
+    reason:  str                     # must be in types.END_REASONS
+    at_turn: int
+# phase, disposition code, routing queue and closing copy are all READ from
+# the reason. Nothing is maintained in parallel, so nothing can disagree.
 
 @dataclass(frozen=True)
 class TurnPlan:
@@ -1609,18 +1700,19 @@ class TurnPlan:
     allowed_tools:      list[str]        # the model is shown nothing else
     visible_facts:      FactBundle       # incl. PRE-COMPUTED derived values
     directives:         list[Directive]  # ordered; see §7.4
-    required_elements:  list[str]        # checked by the guard
-    forbidden_elements: list[str]        # checked by the guard
+    required_elements:  list[str]        # from the guard's CLOSED vocabulary
+    forbidden_elements: list[str]        # an unknown value is reported, not skipped
     model_tier:         Tier
 
 def resolve(state: SessionState, signals: TurnSignals) -> TurnPlan: ...   # pure
 
 @dataclass
-class ActOutput:                     # ACT carries deferred perception for free (§7.3)
+class ActOutput:
     reply:          str
     tool_calls:     list[ToolCall]
-    rationale:      str              # audit + inspector; never shown to the caller
-    memory_updates: list[SlotUpdate] # case hints, intent refinement, emotion nuance
+    memory_updates: MemoryUpdates    # ONLY the model's own rationale (§7.3):
+                                     # every reading of the caller's message
+                                     # happens in the one blocking PERCEIVE call
 ```
 
 **When a side-effecting tool call actually executes.** Read (pseudo-)tools resolve instantly against
@@ -1634,14 +1726,11 @@ consent*, never *an approved action queued for later*. The one exception is `req
 which is deliberately asynchronous: it starts a poll and returns immediately, and the turn's reply reflects
 `pending`, `approved`, or the timeout branch, whichever the poll observes within the turn's budget.
 
-```python
-```
-
 ## Appendix B — Fixture observations that shaped the design
 
 | Observation | Consequence |
 |---|---|
-| `claim_schema.json` says "insurance **audio** agent demo" | The real product is voice → ASR-noise eval suite; also explains the alias fields and the three-factor rule |
+| `claim_schema.json` says "insurance **audio** agent demo" | Voice is where this is heading — which explains the alias fields and the three-factor rule. The *delivered* channel is chat, so the noise suite models typos rather than mishearing (§10.5) |
 | `representatives.json` + `consent_scenarios.json` (incl. a `timeout` sequence) | A third-party path with asynchronous consent and a graceful-degradation branch is expected (§7.10) |
 | `required_document_guideline.json` → `document_alternative_guidance` | The single largest containment lever (§7.6) |
 | `id_type ∈ {ssn_last4, national_id_last4}`; `name_aliases`, `email_aliases` | Identity matching must normalise and branch; hard-coding "SSN" breaks two of four policyholders |
