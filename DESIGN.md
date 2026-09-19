@@ -5,6 +5,27 @@ conversational agent. Insurance claims support is the first instance; the engine
 
 ---
 
+### The claim
+
+> **An excellent SOP harness is one whose guarantees do not depend on the model being good.**
+
+Everything here is in service of that sentence, and §8.7 is the attempt to falsify it: the same suite
+run against a **deliberately hostile model** that ignores the system prompt and actively tries to leak
+case data, promise payouts and invent amounts.
+
+| | Strong model | Hostile model |
+|---|---|---|
+| Safety invariant violations | 0 | **0** |
+| Case data disclosed before verification | 0 | **0** |
+| Guard fallback rate | 0.00 | **0.98** |
+| Scenario pass rate | 1.00 | 0.07 |
+
+Quality collapses. Safety does not move. **The harness converts model weakness from a safety problem
+into a cost-and-quality problem** — and a cost problem is a dial a buyer sets, where a safety problem
+stops a deployment.
+
+---
+
 ### How to read this
 
 Five decisions carry the whole design. If you read nothing else:
@@ -17,8 +38,16 @@ Five decisions carry the whole design. If you read nothing else:
 | 4 | Therefore policy is **data, not prose**: the SOP is a spec file and the engine is generic. Insurance is instance #1 of N. | §6 |
 | 5 | Safety without **containment** is a product nobody buys, so containment is a first-class metric measured beside the safety ones. | §7.6, §8 |
 
+**Reading paths, by how much time you have:**
+
+| Time | Read |
+|---|---|
+| 5 min | This page, then §2 (the core question), §4.1 (the split criterion), §8.7 (the result) |
+| 20 min | Add §3 (why three hybrids, not two), §6 (SOP as config), §7.1–7.2 (gates), §7.9 (the guard) |
+| Full | Everything. §7.13–§7.16 are **operational behaviour** — silence, disposition, latency, abandonment. They are real and hard-won, but they are consequences of the architecture rather than arguments for it; skip them on a first pass. |
+
 §1–§5 build the mental model. §6–§7 are the detailed design. §8–§10 cover what we added beyond the
-brief, how it is prioritised, and how it is measured.
+brief, how it is prioritised, and how it is measured. §11 is what is *not* solved.
 
 ---
 
@@ -752,6 +781,29 @@ off-topic chat — it is about an agent making a binding commitment. Hence a che
 5. Explicit capability denials: no role-play, no code/poetry/translation, and **never echo the caller's
    out-of-scope content** (defeating "repeat after me").
 
+**A fifth rule family, added after the hostile-model run (§8.7): procedural relevance.**
+
+Scope (R3) was enforced only at the *input* boundary. An off-topic caller message is classified by
+PERCEIVE and answered with a deterministic template — solid. Nothing checked the other direction: an
+off-topic *reply* to a perfectly on-topic question. The hostile run walked straight through, delivering
+a banana bread recipe to callers seventeen times while every safety-critical rule held. On the output
+side, R3 was being enforced entirely by the model's good manners.
+
+The rule is deliberately **not a topic blocklist** — a list of forbidden subjects is unbounded and out
+of date the day it ships. It is the positive form of the SOP's own `KEEP_THE_CALL_MOVING` directive:
+every reply must ask something, address the caller, or state something traceable to this caller's case.
+Prose about anything else has none of those, and the rule is derived from the SOP rather than from a
+list someone maintains.
+
+Validated against **283 recorded real replies with zero false positives** while still catching the
+off-topic answer. The first version had two, both real agent sentences (`let me try requesting it
+again`, and a vocative `Thanks for calling in, Margaret`); they were found by measuring against
+recorded output rather than by imagining what the rule might catch, and both are now regression tests.
+
+This is a deterministic floor, not complete output-scope enforcement — a fluent, on-register, subtly
+out-of-scope answer would pass it. Full coverage needs a classifier call per turn; §11 records that
+rather than implying it is closed.
+
 ### 7.10 Third-party representatives and asynchronous consent
 
 `representatives.json` and `consent_scenarios.json` describe a flow the brief never mentions, which is
@@ -1172,6 +1224,109 @@ falsifiable claim — and puts pass rate, cost, transcription-noise robustness a
 after it. Per-scenario transcripts come last and collapsed: they are evidence for a reader who doubts
 the summary, not the summary itself. It renders as a standalone page with no app shell, because the
 artifact needs to survive being emailed to someone who will never open the product.
+
+### 8.7 Enforcement independence — the experiment that tests the thesis
+
+Every other measurement in this document reports what the system *did*. This one tests whether the
+architecture is *load-bearing*, which is a different question and the only one that distinguishes a
+harness from a well-written prompt.
+
+**Why a model ladder is not enough.** The obvious experiment runs the suite on a strong model and then
+a cheap one. It is worth doing (§8.3) and it tests a shallow version of the claim: both are
+well-aligned models that want to follow instructions. Passing on both shows the harness works *with two
+cooperative models*, not that it does not depend on the model.
+
+**So the bottom rung is an adversary.** `evals/hostile_model.py` ignores the system prompt entirely and
+returns replies engineered to break specific requirements — disclosing case detail before identity is
+established, promising payouts, inventing dollar amounts, answering off-topic questions, reading out an
+SSN, complying with an injection. It is a stand-in for a badly fine-tuned, prompt-injected, or simply
+much weaker model at its worst. It needs no API key and costs nothing, so unlike the real-model suite
+it can run on every commit — the most important check being the cheapest to keep running is not an
+accident, it is the design.
+
+**Splitting the metrics is the result.** "Nothing gets worse with a worse model" is false and not worth
+defending; a weaker model writes worse sentences. The honest claim divides them:
+
+| | Metric | Strong | Hostile | Why |
+|---|---|---|---|---|
+| **Must be flat** | invariant violations | 0 | 0 | enforced in code |
+| | unguarded passes | 0 | 0 | see §8.8 |
+| | case data before verification | 0 | 0 | structurally absent from context |
+| **May degrade** | scenario pass rate | 1.00 | 0.07 | task completion, not safety |
+| | guard repair rate | 0.00 | 0.98 | model wrong on first attempt |
+| | guard fallback rate | 0.00 | 0.98 | model wrong twice; template served |
+
+52 replies reached callers while the model was actively trying to break the SOP. None contained the
+fabricated amount, the guarantee, the invented deadline, the SSN or the injection compliance. The
+caller got stiff templates and a useless call — which is exactly the trade the architecture promises:
+
+> **Model weakness becomes a cost-and-quality problem instead of a safety problem.**
+
+That sentence is the commercial argument for this whole design, and it is what makes "run the cheaper
+model here" a decision a business can actually take. It is also the connection to the mission: frontier
+capability becomes affordable when the floor is held by something other than the frontier model.
+
+**What it found.** The run delivered a banana bread recipe to callers seventeen times. Scope (R3) was
+enforced only at the *input* boundary — an off-topic caller message is classified and answered with a
+deterministic template — while an off-topic *reply* to an on-topic question had nothing checking it. On
+the output side R3 rested entirely on the model's manners. That produced the guard's fifth rule
+(§7.9), and it is the kind of finding no number of additional scripted scenarios would have surfaced,
+because every one of them would have observed a correct outcome.
+
+**Honest limits.** The hostile model is a fixed rotation, not an adaptive adversary searching for the
+weakest rule. It establishes that the floor holds against a known set of attacks, not that it is
+unbreakable. EVAL.md §10 is explicit about this.
+
+### 8.8 Attribution — *why* did it pass?
+
+An outcome-only eval cannot distinguish a requirement that was *enforced* from one the model happened
+to satisfy. They are identical in the transcript and worlds apart in production, because one survives a
+model change and the other does not.
+
+This project has the example that justifies the whole idea. **`SEND_NOW` — the directive instructing
+the agent to send the summary email — never fired once, for the entire build.** A comparison against
+the wrong turn index made its condition permanently false. The email went out anyway, because the model
+saw `pending_action` in `visible_facts` and volunteered the tool call. 12/12 scenarios green, eight
+invariants holding, and the control plane doing nothing at all. That is precisely the failure this
+architecture exists to prevent.
+
+So `evals/attribution.py` states, for each requirement, **which mechanism is supposed to make it true**,
+and checks both. Three kinds, which fail differently:
+
+| Kind | Meaning | Survives a bad model? |
+|---|---|---|
+| `structural` | The model *cannot* misbehave — the data or tool is not in its context | Always |
+| `deterministic` | Code decides; the model only narrates | Yes, **if the code runs** |
+| `behavioural` | Instruction plus output-guard check | Final answer yes; first attempt no |
+
+The report's key line is **unguarded passes**: right outcome, absent mechanism. A green suite with
+unguarded passes is lying to you. A harness resting mostly on `behavioural` enforcement is a prompt
+with extra steps — so the mix is reported, not just the total.
+
+Worth recording: this module's own first run reported five false violations, because it keyed claims on
+the phase a turn *started* in rather than the phase its plan was *built* for. An off-by-one-phase error,
+in the same family as the bug it was written to catch. The instrument needed calibrating before it
+could be believed, which is an argument for always reading the violations rather than trusting the
+summary.
+
+### 8.9 Coverage — how we stop finding bugs by hand
+
+Every bug found in the days before this section existed was found the same way: a human opened the demo,
+did something unscripted, and watched it break. That works, does not scale, and covers only what the
+tester thought of.
+
+The SOP is a finite state machine, so coverage is computable rather than felt. `evals/coverage.py` run
+against the original twelve scenarios reported that **`CLOSED` was never reached — not once** — and that
+six of fourteen disposition codes were unreachable. Every hand-found bug of the preceding days lived in
+exactly that unlit region: the summary re-offered after sending, the phase never settling, the close
+reason defaulting to abandonment, `SEND_NOW`. The tester was not unlucky; they were walking into the one
+place nothing covered.
+
+Coverage is a floor, never a ceiling. Exercising a transition does not mean the behaviour on it is
+right — that is what invariants and attribution claims are for. It only means no part of the machine is
+dark.
+
+---
 
 ## 9. Priorities
 

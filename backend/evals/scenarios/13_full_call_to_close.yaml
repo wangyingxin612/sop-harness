@@ -1,0 +1,28 @@
+id: full_call_to_close
+description: >
+  The whole call, end to end, to a CLOSED session and a clean disposition.
+  Added after an audit found that NONE of the original twelve scenarios ever
+  reached CLOSED — they ended in PROCESS_CASE, HUMAN_HANDOFF, RESOLVE_INTENT
+  or POST_PROCESS. The entire end-of-conversation region of the SOP was
+  untested, which is exactly where four live bugs were later found by hand:
+  the summary being re-offered after sending, the phase never settling, the
+  close reason defaulting to abandonment, and SEND_NOW never firing.
+tags: [core, happy_path, post_process, close_out, disposition]
+turns:
+  - user: "Hi, I'm the policyholder. Margaret Chen, policy POL-9921, DOB 1985-03-15, SSN last four 4472. I'm calling about my denied healthcare claim from January."
+    expect_phase: RESOLVE_INTENT
+  - user: "Yes, that's the one. Why was it denied?"
+    expect_phase: PROCESS_CASE
+  - user: "Okay, that makes sense. That's everything I needed, thanks."
+    expect_phase: POST_PROCESS
+  - user: "Yes please, send me the summary."
+    # The caller already said they were done BEFORE the summary offer, so the
+    # agent should send and close in the same turn rather than asking again
+    # whether they need anything else (DESIGN.md §7.15).
+    expect_phase: CLOSED
+final:
+  phase: CLOSED
+  email_sent: true
+  email_skipped: false
+  confirmed_case_id: CL-2048
+  caller_role: policyholder

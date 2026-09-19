@@ -11,6 +11,8 @@ reason about exhaustively.
 """
 from __future__ import annotations
 
+import re
+
 import copy
 
 from app.sop.domain import DomainContext
@@ -75,6 +77,70 @@ def _record_deferred_signals(state: SessionState, signals: TurnSignals) -> None:
         )
 
 
+# Frustration markers, used only to raise a FLOOR on this turn's intensity.
+#
+# WHY THIS IS DETERMINISTIC AND WHY IT IS A FLOOR. `signals.intensity` is a
+# DEFERRED perception (app/llm/generation.py's record_signals), so it reflects
+# the PREVIOUS turn. That is the right call for most signals — §7.3's
+# deferred/blocking split buys latency — but it is the wrong call for this
+# one, and the attribution report is what showed it: ACKNOWLEDGE_EMOTION never
+# fired once across the whole suite, including the scenario whose entire
+# purpose is a frustrated caller saying "this is ridiculous". R9's empathy was
+# real in the transcripts and was coming from the model's own manners, not
+# from the harness. That is an unguarded pass: right outcome, no mechanism.
+#
+# Empathy is needed on the turn the person is upset, not the turn after, so
+# the signal has to be available before this turn's plan is built. A model
+# call would add a blocking round trip to every turn to decide whether to be
+# kind, which is a poor trade.
+#
+# The usual objection to a marker list is brittleness, and it is the right
+# objection for a SECURITY rule. Here the consequence of being wrong is tiny
+# in both directions: a false positive makes the agent slightly warmer than
+# necessary, and a false negative simply defers to the model's own reading,
+# because this only ever raises a floor and never lowers the model's number.
+# That is §7.3's "isolate uncertainty on the low-consequence path" applied
+# exactly where it belongs.
+_FRUSTRATION_MARKERS = re.compile(
+    r"\b("
+    r"ridiculous|absurd|outrageous|unacceptable|appalling"
+    r"|fed up|sick of|tired of|had enough"
+    r"|already (told|said|explained|gave)"
+    r"|again and again|over and over|how many times"
+    r"|waste of (my )?time|wasting my time"
+    r"|no ?one (is )?help|nobody (is )?help|useless"
+    r"|this is (a )?(joke|nonsense)"
+    r"|so frustrat|really frustrat|very frustrat"
+    r"|angry|furious|upset|annoyed"
+    r")\b",
+    re.IGNORECASE,
+)
+
+# Stronger markers: distress about consequences, not just irritation with us.
+_DISTRESS_MARKERS = re.compile(
+    r"\b("
+    r"can'?t afford|cannot afford|out of pocket"
+    r"|desperate|panicking|terrified|scared"
+    r"|losing (my|our) (home|house|job)"
+    r"|(my|our) (mother|father|mum|mom|dad|son|daughter|wife|husband) is (very )?(ill|sick|dying)"
+    r"|in hospital|passed away|died"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def deterministic_intensity_floor(raw_message: str) -> int:
+    """0-3 floor read straight off the caller's words. Never lowers the
+    model's own reading — see the note above _FRUSTRATION_MARKERS."""
+    if not raw_message:
+        return 0
+    if _DISTRESS_MARKERS.search(raw_message):
+        return 2
+    if _FRUSTRATION_MARKERS.search(raw_message):
+        return 2
+    return 0
+
+
 def _apply_emotion_and_abuse_counters(state: SessionState, signals: TurnSignals, spec: SopSpec) -> None:
     facts = state.facts
     if signals.refusal:
@@ -82,11 +148,12 @@ def _apply_emotion_and_abuse_counters(state: SessionState, signals: TurnSignals,
     if signals.escalation_request:
         facts.repeated_request_count += 1
 
-    deterministic_floor = 0
+    # This turn's words, available NOW — not last turn's deferred reading.
+    deterministic_floor = deterministic_intensity_floor(signals.raw_message)
     if facts.refusal_count >= 2:
-        deterministic_floor = 2
+        deterministic_floor = max(deterministic_floor, 2)
     elif facts.refusal_count >= 1:
-        deterministic_floor = 1
+        deterministic_floor = max(deterministic_floor, 1)
     if signals.escalation_request:
         deterministic_floor = max(deterministic_floor, 2)
     facts.last_intensity = max(signals.intensity, deterministic_floor)

@@ -29,6 +29,26 @@ from evals.asr_noise import apply_noise  # noqa: E402
 from evals.scenario import Scenario, TurnSpec, load_all_scenarios  # noqa: E402
 
 
+def _flatten_keys(d, depth: int = 0) -> set:
+    """Every key name anywhere in visible_facts.
+
+    Keys, never values: this is used to assert that claim data was ABSENT
+    from the model's context during VERIFY_ID, and a report that quoted the
+    values in order to prove they were withheld would be self-defeating.
+    """
+    keys = set()
+    if depth > 6 or not isinstance(d, dict):
+        return keys
+    for k, v in d.items():
+        keys.add(k)
+        if isinstance(v, dict):
+            keys |= _flatten_keys(v, depth + 1)
+        elif isinstance(v, list):
+            for item in v:
+                keys |= _flatten_keys(item, depth + 1)
+    return keys
+
+
 @dataclass
 class TurnOutcome:
     turn: TurnSpec
@@ -44,6 +64,21 @@ class TurnOutcome:
     guard_attempts: list = field(default_factory=list)
     tool_effects: list = field(default_factory=list)
     used_fallback: bool = False
+    # CONTROL-PLANE FACTS. These were being thrown away, which meant the
+    # suite could only check OUTCOMES: "the email was sent" passed
+    # identically whether the control plane commanded it or the model
+    # improvised it. That is the hole `SEND_NOW` lived in for the whole
+    # project — the directive never fired once, the model volunteered the
+    # tool call from pending_action, and 12/12 stayed green throughout.
+    # Recording these is what makes enforcement checkable (evals/attribution.py).
+    phase_before: str = ""
+    plan_phase: str = ""        # the phase this turn's rules came from
+    directives: list = field(default_factory=list)
+    allowed_tools: list = field(default_factory=list)
+    visible_fact_keys: list = field(default_factory=list)
+    model_tier: str = ""
+    latency_s: dict = field(default_factory=dict)
+    signals: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -111,13 +146,22 @@ def run_scenario(
             phase_ok = turn.expect_phase is None or state.phase.value == turn.expect_phase
             route_ok = turn.expect_route is None or r.trace_event["plan"]["route"] == turn.expect_route
             attempts = r.trace_event.get("guard_attempts", [])
+            plan = r.trace_event["plan"]
             result.turn_outcomes.append(
                 TurnOutcome(
                     turn=turn, sent_text=user_text, reply=r.reply, phase_after=state.phase.value,
-                    route=r.trace_event["plan"]["route"], phase_assertion_ok=phase_ok, route_assertion_ok=route_ok,
+                    route=plan["route"], phase_assertion_ok=phase_ok, route_assertion_ok=route_ok,
                     guard_attempts=attempts,
                     tool_effects=r.trace_event.get("tool_effects", []),
                     used_fallback=any(a.get("fallback") for a in attempts),
+                    phase_before=r.trace_event["phase_before"],
+                    plan_phase=plan.get("phase", ""),
+                    directives=list(plan.get("directives", [])),
+                    allowed_tools=list(plan.get("allowed_tools", [])),
+                    visible_fact_keys=sorted(_flatten_keys(plan.get("visible_facts") or {})),
+                    model_tier=plan.get("model_tier", ""),
+                    latency_s=r.trace_event.get("latency_s", {}),
+                    signals=r.trace_event.get("signals", {}),
                 )
             )
             result.total_cost_usd += r.trace_event["cost"]["total_cost_usd"]

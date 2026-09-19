@@ -87,10 +87,17 @@ graceful-degradation behavior (DESIGN.md §7.10).
 All from the repo root:
 
 ```bash
-make test                      # 234 tests, 0 model calls, ~3s
-make eval                      # 12 scenarios against the real API, ~$0.51, ~4 min
+make test           # 281 tests, 0 model calls, ~5s
+make independence   # the thesis test: hostile model, 0 API calls, ~10s
+make eval           # 15 scenarios against the real API, ~$0.80, ~6 min
+make simulate N=6   # improvising simulated callers, ~$0.15/conversation
 make eval-one ID=margaret_chen_happy_path
 ```
+
+`make independence` is the one to run first. It re-runs the whole suite against a model that
+**actively tries to break the SOP** and asserts that safety metrics stay at zero while quality
+collapses — the claim being that guarantees come from the harness, not from the model. It needs no API
+key and costs nothing, which is why it is the check that can run on every commit. See EVAL.md §2.
 
 The eval run writes `backend/evals/reports/latest.json` and is rendered as a readable page at
 **/api/evals/report** (also linked from the Operations tab).

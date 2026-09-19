@@ -1,0 +1,21 @@
+id: decline_then_close
+description: >
+  The other end-of-call branch: the caller declines the summary and then
+  ends the conversation. Declining must be a complete outcome that still
+  reaches CLOSED with a contained disposition — not a dead end that only the
+  idle sweeper can finish.
+tags: [core, post_process, close_out, disposition]
+turns:
+  - user: "Margaret Chen, DOB 1985-03-15, SSN last four 4472. I have a question about my dental claim."
+    expect_phase: RESOLVE_INTENT
+  - user: "Yes, that's the one. What's the status?"
+    expect_phase: PROCESS_CASE
+  - user: "Got it. That's all I needed."
+    expect_phase: POST_PROCESS
+  - user: "No thanks, I don't need the email. Goodbye."
+    expect_phase: CLOSED
+final:
+  phase: CLOSED
+  email_sent: false
+  email_skipped: true
+  confirmed_case_id: CL-1899

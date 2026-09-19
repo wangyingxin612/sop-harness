@@ -1,4 +1,4 @@
-"""VERIFY — the output guard (DESIGN.md §7.9). One guard, four rule
+"""VERIFY — the output guard (DESIGN.md §7.9). One guard, five rule
 families, each independently unit-testable with hand-crafted reply strings —
 no LLM needed to exercise this module, same as the policy layer.
 
@@ -6,6 +6,12 @@ no LLM needed to exercise this module, same as the policy layer.
     ② grounding   — every number/date traces to visible_facts
     ③ commitment  — sensitive numbers are attributed, never promised
     ④ contract    — required_elements present, forbidden_elements absent
+    ⑤ relevance   — the reply advances the procedure at all
+
+    ⑤ was added after the hostile-model run (evals/hostile_model.py) showed
+    that scope was enforced only on the INPUT side: an off-topic reply to an
+    on-topic question had nothing checking it, and a banana bread recipe
+    reached callers seventeen times while every safety rule held.
 
 Guards ①-③ assert something is ABSENT — checkable sentence-by-sentence, the
 half of DESIGN.md §7.11's "never retract" protocol that can gate a stream.
@@ -280,11 +286,99 @@ def check_contract(reply: str, plan: TurnPlan) -> tuple[list[str], list[str]]:
     return blocking, missing
 
 
+# Words that show the reply is addressed to the caller and doing the job,
+# rather than being prose that happens to have been generated. Second person
+# is the cheapest reliable signal: an agent working someone's case cannot
+# help but say "you" or "your".
+_ADDRESSES_CALLER_RE = re.compile(
+    r"\b(you|your|you're|you'll|you've|we|we'll|we're|i|i'll|i'm|i've|me|my|let's|let me)\b",
+    re.I,
+)
+
+# A vocative — "Thanks for calling in, Margaret" — is addressing the caller as
+# directly as "you" is. Validating the rule against 283 recorded replies
+# surfaced exactly two false positives, and this was one of them; the other
+# was "let me", now in the pattern above. Both were found by measuring rather
+# than by imagining what the rule might catch.
+_VOCATIVE_RE = re.compile(r",\s+[A-Z][a-z]{2,}\b")
+
+
+def _facts_vocabulary(plan: TurnPlan) -> set[str]:
+    """Distinctive tokens from what the model was actually given this turn."""
+    vocab: set[str] = set()
+
+    def walk(v, depth=0):
+        if depth > 6:
+            return
+        if isinstance(v, dict):
+            for item in v.values():
+                walk(item, depth + 1)
+        elif isinstance(v, list):
+            for item in v:
+                walk(item, depth + 1)
+        elif isinstance(v, str):
+            for tok in re.findall(r"[A-Za-z][\w'-]{3,}", v):
+                vocab.add(tok.lower())
+    walk(plan.visible_facts)
+    return vocab
+
+
+def check_procedural_relevance(reply: str, plan: TurnPlan) -> list[str]:
+    """Does this reply advance the procedure at all?
+
+    WHY THIS EXISTS. Scope (R3) was enforced only at the INPUT boundary: an
+    off-topic caller message is classified by PERCEIVE and answered with a
+    template, deterministically. Nothing checked the other direction — an
+    off-topic REPLY to a perfectly on-topic question. The hostile-model run
+    (evals/hostile_model.py) walked straight through that gap: a banana bread
+    recipe was delivered to callers seventeen times while every
+    safety-critical rule held. R3 was, on the output side, being enforced
+    entirely by the model's good manners.
+
+    This is deliberately NOT a topic blocklist — a list of forbidden subjects
+    is unbounded and always out of date. It is the positive form of the same
+    requirement, taken from the SOP's own KEEP_THE_CALL_MOVING directive:
+    every reply must ask something, address the caller, or say something
+    traceable to the facts of their case. Prose about anything else has none
+    of those.
+
+    Conservative on purpose — it fires only when ALL anchors are absent, so
+    an empathy line ("I'm sorry to hear about your mother") passes on the
+    second person alone, and a one-word acknowledgement is too short to be
+    the whole reply anyway. Full output-scope classification needs a model
+    call per turn; this is the deterministic floor under it, and DESIGN.md
+    §11 records the remaining gap rather than implying it is closed.
+    """
+    text = reply.strip()
+    # Below this length a reply cannot be a substantive off-topic ANSWER, and
+    # flagging short filler ("Of course, no problem at all.") would only buy
+    # repair round trips on something harmless. Short replies that genuinely
+    # break the SOP — a bare "Thanks, goodbye!" skipping the summary offer —
+    # are caught by the contract and farewell rules, which is where they
+    # belong. Each rule does one job.
+    if not text or len(text.split()) < 10:
+        return []
+    if "?" in text:
+        return []
+    if _ADDRESSES_CALLER_RE.search(text) or _VOCATIVE_RE.search(text):
+        return []
+    vocab = _facts_vocabulary(plan)
+    if vocab:
+        tokens = {t.lower() for t in re.findall(r"[A-Za-z][\w'-]{3,}", text)}
+        if tokens & vocab:
+            return []
+    return [
+        "reply does not advance the procedure: it asks nothing, addresses no one, "
+        "and states nothing traceable to this caller's case"
+    ]
+
+
 def check_reply(reply: str, plan: TurnPlan, domain: DomainContext, state: SessionState) -> GuardVerdict:
     violations: list[str] = []
     violations += check_disclosure(reply, domain, plan)
     violations += check_grounding(reply, plan)
     violations += check_commitment(reply)
+    violations += check_procedural_relevance(reply, plan)
     contract_blocking, missing_required = check_contract(reply, plan)
     violations += contract_blocking
 

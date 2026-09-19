@@ -1,0 +1,22 @@
+id: second_question_after_wrap_up
+description: >
+  A caller who says they are done, and then is not. The sticky wrap-up flag
+  (DESIGN.md §7.15) must not turn "that's it, thanks" into a trapdoor that
+  hangs up on someone who thinks of one more thing — the SOP has to let the
+  conversation come back to case work and then close properly.
+tags: [core, post_process, recovery, close_out]
+turns:
+  - user: "Margaret Chen, DOB 1985-03-15, SSN last four 4472. Calling about the denied healthcare claim from January."
+    expect_phase: RESOLVE_INTENT
+  - user: "Yes that's it. Why was it denied?"
+    expect_phase: PROCESS_CASE
+  - user: "Okay, that's all, thanks."
+    expect_phase: POST_PROCESS
+  - user: "Sorry, actually one more thing — how long do I have to appeal?"
+    # Must still be able to answer. The wrap-up flag records an intention,
+    # it is not a lock on the conversation.
+  - user: "Great, that's really all now. Yes, email me the summary."
+    expect_phase: CLOSED
+final:
+  phase: CLOSED
+  email_sent: true

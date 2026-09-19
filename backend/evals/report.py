@@ -91,6 +91,14 @@ def write_report(results, out_path: str | Path) -> None:
                         "used_fallback": o.used_fallback,
                         "guard_attempts": o.guard_attempts,
                         "tool_effects": o.tool_effects,
+                        "phase_before": o.phase_before,
+                        "plan_phase": o.plan_phase,
+                        "directives": o.directives,
+                        "allowed_tools": o.allowed_tools,
+                        "visible_fact_keys": o.visible_fact_keys,
+                        "model_tier": o.model_tier,
+                        "latency_s": o.latency_s,
+                        "signals": o.signals,
                     }
                     for o in r.turn_outcomes
                 ],
@@ -99,5 +107,21 @@ def write_report(results, out_path: str | Path) -> None:
         ],
     }
     out_path.write_text(json.dumps(report, indent=2))
+
+    # Attribution and coverage are derived from the report, so deriving them
+    # HERE means they can never be stale relative to it. Keeping them as a
+    # separate command someone has to remember is how a dashboard ends up
+    # confidently describing last week's run.
+    try:
+        from evals.attribution import analyse as _attrib
+        from evals.coverage import analyse as _cov
+
+        (out_path.parent / "attribution.json").write_text(json.dumps(_attrib(report), indent=2))
+        (out_path.parent / "coverage.json").write_text(json.dumps(_cov(report), indent=2))
+    except Exception as exc:  # noqa: BLE001
+        # A derived-analysis failure must not lose the run that cost money
+        # and minutes to produce.
+        print(f"  (analysis skipped: {type(exc).__name__}: {exc})")
+
     print(f"\nWrote report to {out_path}")
     print(json.dumps(report["summary"], indent=2))

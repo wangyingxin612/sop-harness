@@ -17,9 +17,18 @@ turns:
   - user: "OK, no more questions, thanks."
     expect_phase: POST_PROCESS
   - user: "Yes please, send it to my email."
-    expect_phase: POST_PROCESS
+    # CHANGED from POST_PROCESS, deliberately, and worth saying why: the
+    # caller already said "no more questions, thanks" on the previous turn.
+    # The old expectation encoded the behaviour a live tester complained
+    # about — the agent sending the summary and then leaving them sitting in
+    # an open conversation, waiting to be asked a second time whether they
+    # needed anything. With the wrap-up intent sticky (DESIGN.md §7.15) the
+    # agent sends and closes in the same turn, so CLOSED is now the correct
+    # assertion. This is a test updated to match an intended behaviour
+    # change, not a test relaxed to accommodate a regression.
+    expect_phase: CLOSED
 final:
-  phase: POST_PROCESS
+  phase: CLOSED
   verified_party_id: P9
   confirmed_case_id: CL-2048
   email_sent: true

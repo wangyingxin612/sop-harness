@@ -17,7 +17,7 @@ from app.llm.extraction import perceive_blocking
 from app.llm.generation import act
 from app.llm.provider import LLMProvider
 from app.sop.domain import DomainContext
-from app.sop.machine import decide, settle_phase
+from app.sop.machine import decide, deterministic_intensity_floor, settle_phase
 from app.sop.spec import SopSpec
 from app.sop.types import Phase, SessionState, Turn
 from app.tools.effects import execute_tool_call, load_consent_scenarios
@@ -159,6 +159,13 @@ def run_turn(
         "_reply": act_output.reply,  # for eval invariants (evals/invariants.py); not shown in the Inspector as a duplicate field
         "signals": _signals_for_trace(signals),
         "plan": {
+            # The phase this plan was BUILT for. Recorded explicitly rather
+            # than inferred from phase_after, because settle_phase() can move
+            # the session to CLOSED after the plan exists — so the two
+            # legitimately differ on the turn that ends a call, and anything
+            # reasoning about "which rules applied to this turn" has to use
+            # this one.
+            "phase": plan.phase.value,
             "allowed_tools": list(plan.allowed_tools),
             "directives": [d.id for d in plan.directives],
             "required_elements": list(plan.required_elements),
@@ -231,6 +238,11 @@ def _signals_for_trace(signals) -> dict:
         "confirms_proposed_case": signals.confirms_proposed_case,
         "wrap_up_request": signals.wrap_up_request,
         "consent_response": signals.consent_response,
+        # Recorded so the attribution report can ask whether empathy was
+        # INSTRUCTED on the turn a caller was upset, rather than merely
+        # present because the model is polite.
+        "intensity": signals.intensity,
+        "upset": deterministic_intensity_floor(signals.raw_message) >= 2,
     }
 
 

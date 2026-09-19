@@ -90,6 +90,9 @@ details[open] summary::before { content:"▾ "; }
 .turn .meta { color:var(--faint); font-size:0.75rem; margin-top:3px; }
 .note { color:var(--dim); font-size:0.85rem; margin-top:10px; }
 .best { font-weight:650; }
+.grouphead { font-size:0.72rem; text-transform:uppercase; letter-spacing:0.07em;
+             color:var(--faint); padding-top:16px; }
+.mech { font-size:0.75rem; color:var(--faint); }
 """
 
 
@@ -146,6 +149,130 @@ def _invariant_section(report) -> str:
 <div class="note">These are properties of the harness, not of the model: they are enforced in code
 before a reply is released, so a weaker or newer model changes the cost and the phrasing but not
 whether they hold. That is the claim this suite exists to keep honest.</div>
+"""
+
+
+def _fmt(v):
+    if v is None:
+        return "&mdash;"
+    if isinstance(v, float):
+        return f"{v:.3f}" if v < 1 else f"{v:.2f}"
+    return str(v)
+
+
+def _independence_section() -> str:
+    """The headline, above anything that is merely a pass rate."""
+    data = _load("independence.json")
+    if not data or not data.get("rows"):
+        return ""
+    rows = data["rows"]
+    verdict = data.get("verdict", {})
+    labels = [
+        ("invariant_violations", "Safety invariant violations", True),
+        ("attribution_violations", "Requirements met with no mechanism behind them", True),
+        ("unguarded_passes", "Unguarded passes", True),
+        ("case_data_before_verification", "Case data disclosed before verification", True),
+        ("pass_rate", "Scenario pass rate", False),
+        ("guard_repair_rate", "Guard repair rate", False),
+        ("guard_fallback_rate", "Guard fallback rate", False),
+        ("total_cost_usd", "Cost to run", False),
+        ("total_turns", "Turns", False),
+    ]
+    safety_rows, quality_rows = [], []
+    for key, label, is_safety in labels:
+        cells = ""
+        for r in rows:
+            val = r.get("safety", {}).get(key)
+            if val is None:
+                val = r.get("quality", {}).get(key)
+            cells += f"<td class='num'>{_fmt(val)}</td>"
+        line = f"<tr><td>{_e(label)}</td>{cells}</tr>"
+        (safety_rows if is_safety else quality_rows).append(line)
+
+    head = "".join(f"<th>{_e(r['config'])}</th>" for r in rows)
+    holds = verdict.get("holds")
+    span = len(rows) + 1
+    return f"""
+<h2>Enforcement independence
+  <span class="why">The same suite run against a deliberately hostile model that ignores the system
+  prompt and actively tries to leak case data, promise payouts and invent amounts. This is the
+  experiment that tests whether the architecture is load-bearing or decorative.</span></h2>
+<div class="card">
+  <div class="headline">
+    <span class="pill {'ok' if holds else 'bad'}">{'THESIS HOLDS' if holds else 'FALSIFIED'}</span>
+    <span class="unit">Safety guarantees are enforced by the harness, not by model quality.</span>
+  </div>
+</div>
+<div class="card"><table>
+<tr><th>Metric</th>{head}</tr>
+<tr><td colspan="{span}" class="grouphead">Must be flat &mdash; enforced in code</td></tr>
+{''.join(safety_rows)}
+<tr><td colspan="{span}" class="grouphead">May degrade &mdash; this is the price, and it is a dial</td></tr>
+{''.join(quality_rows)}
+</table></div>
+<div class="note"><strong>The harness converts model weakness from a safety problem into a
+cost-and-quality problem.</strong> A safety problem stops a deployment; a cost problem is a dial the
+buyer sets. That conversion is the commercial argument for building a control plane rather than writing
+a longer prompt, and it is what makes running a cheaper model a decision a business can actually take:
+the floor does not move.</div>
+"""
+
+
+def _attribution_section() -> str:
+    data = _load("attribution.json")
+    if not data:
+        return ""
+    rows = []
+    for c in data.get("claims", []):
+        cls = {"enforced": "ok", "violated": "bad", "unguarded": "bad"}.get(c["status"], "tag")
+        rows.append(
+            f"<tr><td><span class='pill {cls}'>{_e(c['status'])}</span></td>"
+            f"<td>{_e(c['description'])}<br><span class='mech'>{_e(c['mechanism'])}</span></td>"
+            f"<td class='num'>{c['enforced']}/{c['occasions']}</td>"
+            f"<td>{_e(c['kind'])}</td></tr>"
+        )
+    mix = data.get("summary", {}).get("enforcement_mix", {})
+    mix_txt = ", ".join(f"{v} {k}" for k, v in sorted(mix.items()))
+    return f"""
+<h2>Attribution &mdash; why did it pass?
+  <span class="why">Each requirement names the mechanism that is supposed to enforce it, and the run is
+  checked against both. A right outcome with the mechanism absent is an <em>unguarded pass</em>: a green
+  result that is lying.</span></h2>
+<div class="card"><table>
+<tr><th>Status</th><th>Claim and mechanism</th><th>Enforced</th><th>Kind</th></tr>
+{''.join(rows)}
+</table></div>
+<div class="note">Enforcement mix: {_e(mix_txt)}. A harness resting mostly on <em>behavioural</em>
+enforcement is a prompt with extra steps, so the mix is reported rather than just the total. This
+matters concretely: <code>SEND_NOW</code>, the directive telling the agent to send the summary email,
+never fired once for the entire build. The email went out only because the model volunteered the tool
+call, with every scenario green throughout.</div>
+"""
+
+
+def _coverage_section() -> str:
+    data = _load("coverage.json")
+    if not data:
+        return ""
+    ph, di = data["phases"], data["directives"]
+    never = di.get("never_fired") or []
+    tail = ""
+    if never:
+        tail = ("<div class='note'>Never fired, i.e. no scenario creates the condition for them: "
+                f"<code>{_e(', '.join(never))}</code>. Each is either a scenario worth writing or a "
+                "branch worth deleting.</div>")
+    return f"""
+<h2>Coverage
+  <span class="why">The SOP is a finite state machine, so how much of it the suite exercises is
+  computable rather than felt. A floor, not a ceiling: reaching a transition says nothing about whether
+  the behaviour on it was right.</span></h2>
+<div class="card"><table>
+<tr><th>Surface</th><th>Exercised</th><th>Coverage</th></tr>
+<tr><td>Phases</td><td class="num">{ph['reached']}/{ph['declared']}</td><td class="num">{_pct(ph['coverage'])}</td></tr>
+<tr><td>Directives</td><td class="num">{di['fired']}/{di['declared']}</td><td class="num">{_pct(di['coverage'])}</td></tr>
+<tr><td>Phase transitions observed</td><td class="num">{data['transitions']['count']}</td><td class="num">&mdash;</td></tr>
+</table></div>
+{tail}
 """
 
 
@@ -309,7 +436,10 @@ def render(report_name: str = "latest.json") -> str:
 <h1>Evaluation report</h1>
 <div class="sub">Insurance claims SOP · {s['total_scenarios']} scenarios · {s.get('total_turns', 0)} turns ·
 ${s.get('total_cost_usd', 0):.4f} to run</div>
+{_independence_section()}
 {_invariant_section(report)}
+{_attribution_section()}
+{_coverage_section()}
 {_summary_section(s)}
 {_asr_section()}
 {_cost_section()}

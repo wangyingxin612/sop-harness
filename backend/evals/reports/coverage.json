@@ -1,0 +1,48 @@
+{
+  "phases": {
+    "declared": 7,
+    "reached": 7,
+    "coverage": 1.0,
+    "unreached": []
+  },
+  "directives": {
+    "declared": 26,
+    "fired": 20,
+    "coverage": 0.769,
+    "never_fired": [
+      "ACKNOWLEDGE_DECLINE",
+      "CLOSE_OUT",
+      "CONSENT_REMINDER",
+      "KYC_DISCLOSURE_LIMITS",
+      "NO_CANDIDATES_HELP",
+      "SEND_NOW"
+    ]
+  },
+  "transitions": {
+    "observed": [
+      "POST_PROCESS -> CLOSED",
+      "POST_PROCESS -> POST_PROCESS",
+      "PROCESS_CASE -> POST_PROCESS",
+      "PROCESS_CASE -> PROCESS_CASE",
+      "RESOLVE_INTENT -> PROCESS_CASE",
+      "RESOLVE_INTENT -> RESOLVE_INTENT",
+      "VERIFY_ID -> ABUSE_TERMINATED",
+      "VERIFY_ID -> HUMAN_HANDOFF",
+      "VERIFY_ID -> RESOLVE_INTENT",
+      "VERIFY_ID -> VERIFY_ID"
+    ],
+    "count": 10
+  },
+  "routes": [
+    "abuse_terminated",
+    "closed",
+    "human_handoff",
+    "normal",
+    "refuse"
+  ],
+  "tools_executed": [
+    "request_consent",
+    "send_summary_email"
+  ],
+  "dispositions_declared": 14
+}
