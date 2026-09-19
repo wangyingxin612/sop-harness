@@ -1580,6 +1580,40 @@ representations*. Needing one is the smell — the duplication is the bug.
 
 ---
 
+## 10.6 Two failures that only a deployment produced
+
+Both were found by using the hosted demo, not by any test, and both changed the design rather than
+just the code. They are here because "what did running it teach you that testing did not" is a fair
+question to ask of any system like this.
+
+**A conversation died mid-session: `POST /api/sessions/3bf2007d/messages → 404`.** Sessions lived in
+memory, and Fly was running two machines behind its proxy. Each held half the conversations and
+returned 404 for the other half. The reasoning that produced the bug is recorded in §9.3's
+simplification log: session state "doesn't need queries, so it doesn't need a database" — which
+conflated *not needing queries* with *not needing durability*. Fixed at three layers: atomic on-disk
+persistence with rehydration on a lookup miss, a precise error the UI can act on instead of a dead
+screen, and `fly.toml` capped at one machine with the reason written next to the setting. Capping is
+the honest fix for a demo; horizontal scaling needs shared state, and pretending otherwise would ship
+something that looks scalable and silently drops conversations.
+
+**A caller lost access to their own claim by being polite.** Asked "how long do I have to appeal?"
+immediately after saying "that's all, thanks", the agent answered that it did not have the appeal
+deadline. The deadline is in the fixture, and the agent had been reading that exact field one turn
+earlier.
+
+`POST_PROCESS` was assembling a strict subset of the case data. That is a misunderstanding of what a
+phase *is*: phases are permission scopes (§7.1), and the caller's entitlement had not changed — same
+verified identity, same confirmed case. Only the phase's *name* had. The reduction was not
+minimum-necessary; it was an accident of the phase being named after the summary. One shared
+`case_visible_facts()` now serves both phases, with an unconsented representative the only thing that
+narrows it.
+
+Worth noting how it survived: the scenario covering that exact situation **passed while exhibiting the
+bug**, because its assertions checked `phase: CLOSED` and `email_sent: true`. Outcome-only assertions
+again (§8.8), one level up — at the scenario layer this time rather than the requirement layer.
+
+---
+
 ## 11. Known limitations
 
 Stated plainly; a design document that lists none is not credible.
