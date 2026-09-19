@@ -89,7 +89,7 @@ All from the repo root:
 ```bash
 make test           # 302 tests, 0 model calls, ~5s
 make independence   # the thesis test: hostile model, 0 API calls, ~10s
-make eval           # 15 scenarios against the real API, ~$0.65, ~6 min
+make eval           # 16 scenarios against the real API, ~$0.72, ~6 min
 make simulate N=6   # improvising simulated callers, ~$0.15/conversation
 make eval-one ID=margaret_chen_happy_path
 ```

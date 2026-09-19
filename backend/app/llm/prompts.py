@@ -67,5 +67,3 @@ def _freedom_for(plan: TurnPlan, spec: SopSpec) -> str:
     return phase_spec.freedom if phase_spec else "OPEN"
 
 
-def build_extraction_context(recent_turns: list[str]) -> str:
-    return "\n".join(recent_turns)

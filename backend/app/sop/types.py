@@ -260,7 +260,6 @@ class SessionFacts:
     matched_factor_count: int = 0
     matched_factor_types: list[str] = field(default_factory=list)
     mismatch_count: int = 0
-    verification_attempts: int = 0
     verification_status: VerificationStatus = VerificationStatus.UNVERIFIED
     caller_role: CallerRole = CallerRole.UNKNOWN
     verified_party_id: Optional[str] = None
@@ -284,7 +283,6 @@ class SessionFacts:
 
     # emotion (deterministic floor inputs — DESIGN.md §7.3)
     refusal_count: int = 0
-    repeated_request_count: int = 0
     last_intensity: int = 0     # THIS turn's reading — what directive selection acts on (§7.4)
     peak_intensity: int = 0     # session-wide max — what the handoff packet reports (§7.6): a caller
                                  # who was furious two turns ago and has since gone quiet is still a

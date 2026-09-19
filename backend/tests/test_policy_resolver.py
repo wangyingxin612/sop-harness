@@ -8,7 +8,9 @@ can assert on, not just describe.
 from app.sop.machine import decide
 from app.sop.policy import ACKNOWLEDGE_EMOTION, resolve
 from app.sop.types import (
+    CallerRole,
     CaseHint,
+    ConsentStatus,
     PendingAction,
     Phase,
     ScopeRing,
@@ -282,106 +284,153 @@ def test_resolve_is_a_pure_function_of_state(domain, spec):
 
 
 class TestPostProcessCloseOut:
-    """Found by testing the deployed demo, not by the eval suite: no scenario
-    had a turn AFTER the email decision, so nothing covered what the agent
-    should say once the summary question is settled. It was still being told
-    to OFFER the summary — i.e. to ask a question it had already answered."""
+    """POST_PROCESS has exactly ONE entry: a wrap-up signal. Everything about
+    the phase follows from that, including which branches can exist.
+
+    These tests used to construct a POST_PROCESS state with
+    `wrap_up_signalled` false, and asserted on directives for it. That state
+    is unreachable — which is why the coverage report showed four directives
+    that had never fired in any run. They were not untested, they were dead,
+    and the tests were keeping them looking alive.
+    """
 
     def _post_process_state(self, domain, spec, *, sent=False, skipped=False):
         state = make_state(phase=Phase.POST_PROCESS)
         state.facts.verified_party_id = "P9"
         state.memory.confirmed_case_id = "CL-2048"
+        state.facts.wrap_up_signalled = True     # true by construction, see below
         state.facts.email_sent = sent
         state.facts.email_skipped = skipped
         return state
 
-    def test_summary_is_not_offered_again_after_it_was_sent(self, domain, spec):
-        state = self._post_process_state(domain, spec, sent=True)
-        state, plan = decide(state, signals(), domain, spec)
-        ids = [d.id for d in plan.directives]
-        assert "OFFER_SUMMARY" not in ids
-        assert "CONSENT_REQUIRED" not in ids
-        assert "CLOSE_OUT" in ids
+    def test_post_process_is_only_reachable_via_a_wrap_up_signal(self, domain, spec):
+        """The invariant the phase's whole shape rests on. If another entry is
+        ever added, four deleted branches become reachable again and this
+        fails — which is the point of asserting it rather than assuming it."""
+        state = make_state(phase=Phase.PROCESS_CASE)
+        state.facts.verified_party_id = "P9"
+        state.memory.confirmed_case_id = "CL-2048"
 
-    def test_summary_is_not_offered_again_after_it_was_declined(self, domain, spec):
-        state = self._post_process_state(domain, spec, skipped=True)
-        state, plan = decide(state, signals(), domain, spec)
-        ids = [d.id for d in plan.directives]
-        assert "OFFER_SUMMARY" not in ids
-        assert "CLOSE_OUT" in ids
+        stayed, _ = decide(state, signals(raw_message="what about the deadline?"), domain, spec)
+        assert stayed.phase == Phase.PROCESS_CASE
+
+        moved, _ = decide(state, signals(wrap_up_request=True, raw_message="that's all"), domain, spec)
+        assert moved.phase == Phase.POST_PROCESS
+        assert moved.facts.wrap_up_signalled is True
 
     def test_summary_is_still_offered_before_any_decision(self, domain, spec):
         state = self._post_process_state(domain, spec)
         state, plan = decide(state, signals(), domain, spec)
-        ids = [d.id for d in plan.directives]
-        assert "OFFER_SUMMARY" in ids
+        assert "OFFER_SUMMARY" in [d.id for d in plan.directives]
 
-    def _approve_the_send(self, domain, spec, *, wrap_up_already_signalled: bool):
-        """Drive the REAL path: a caller saying yes, through transition(),
-        which is what stamps the consent event's turn index.
-
-        The previous version of this test hand-built the consent event with
-        `turn_index=state.next_turn_index() - 1`, copying the same off-by-one
-        the resolver had. It passed for months while `just_approved` was
-        never once true in production — the email went out only because the
-        model volunteered the tool call. A test that constructs its input the
-        way the buggy code reads it cannot catch the bug; it has to go
-        through the code that actually writes the value.
-        """
+    def test_approving_the_send_fires_send_and_close(self, domain, spec):
+        """The regression that matters: the send directive must fire on the
+        turn the caller agrees, not be left to the model's initiative."""
         state = self._post_process_state(domain, spec)
         state.facts.pending_action = PendingAction(
             action_type="send_summary_email", requested_at_turn=0
         )
-        state.facts.wrap_up_signalled = wrap_up_already_signalled
-        return decide(
+        state, plan = decide(
             state,
             signals(consent_response=True, turn_index=state.next_turn_index(),
                     raw_message="yes please, send it"),
             domain, spec,
         )
-
-    def test_approving_the_send_actually_fires_a_send_directive(self, domain, spec):
-        """The regression that matters: SEND_NOW / SEND_AND_CLOSE must fire on
-        the turn the caller agrees, not be left to the model's initiative."""
-        _, plan = self._approve_the_send(domain, spec, wrap_up_already_signalled=False)
-        ids = [d.id for d in plan.directives]
-        assert "SEND_NOW" in ids, f"no send directive fired; got {ids}"
-        assert "send_summary_email" in plan.allowed_tools
-
-    def test_send_now_directive_also_asks_about_further_needs(self, domain, spec):
-        """When the caller has NOT said they're done, the agent sends and asks
-        — it does not assume the call is over."""
-        _, plan = self._approve_the_send(domain, spec, wrap_up_already_signalled=False)
-        send_now = next(d for d in plan.directives if d.id == "SEND_NOW")
-        assert "anything else" in send_now.text.lower()
-
-    def test_send_and_close_when_they_already_said_they_were_done(self, domain, spec):
-        """'That's it, thanks' earlier in the call is still true after the
-        summary question. Asking again is a round trip that exists only
-        because the system forgot."""
-        _, plan = self._approve_the_send(domain, spec, wrap_up_already_signalled=True)
         ids = [d.id for d in plan.directives]
         assert "SEND_AND_CLOSE" in ids
-        assert "SEND_NOW" not in ids
+        assert "send_summary_email" in plan.allowed_tools
+        # ...and it does not also ask whether they need anything else, because
+        # they already said they did not.
         text = next(d for d in plan.directives if d.id == "SEND_AND_CLOSE").text.lower()
         assert "do not ask whether there's anything else" in text
 
+    def test_the_offer_is_dropped_on_the_turn_the_caller_says_yes(self, domain, spec):
+        """Otherwise the same turn carries "offer a summary" and "send it and
+        close" — two contradictory instructions, resolved by whichever the
+        model weighted more."""
+        state = self._post_process_state(domain, spec)
+        state.facts.pending_action = PendingAction(
+            action_type="send_summary_email", requested_at_turn=0
+        )
+        _, plan = decide(
+            state,
+            signals(consent_response=True, turn_index=state.next_turn_index(),
+                    raw_message="yes please"),
+            domain, spec,
+        )
+        ids = [d.id for d in plan.directives]
+        assert "SEND_AND_CLOSE" in ids
+        assert "OFFER_SUMMARY" not in ids
+        assert "CONSENT_REQUIRED" not in ids
+
     def test_phase_settles_to_closed_once_the_email_actually_sends(self, domain, spec):
-        """settle_phase() re-checks the terminal guard after tool effects —
-        the send happens during ACT, long after transition() ran, so without
-        this the caller gets a warm sign-off and stays in an open session."""
+        """settle_phase() re-checks the terminal guard after tool effects --
+        the send happens during ACT, long after transition() ran."""
         from app.sop.machine import settle_phase
 
-        state, _ = self._approve_the_send(domain, spec, wrap_up_already_signalled=True)
-        assert state.phase == Phase.POST_PROCESS      # not yet — nothing sent
-        state.facts.email_sent = True                 # the tool effect lands
+        state = self._post_process_state(domain, spec)
+        assert state.phase == Phase.POST_PROCESS
+        state.facts.email_sent = True
         settle_phase(state)
         assert state.phase == Phase.CLOSED
 
     def test_conversation_can_actually_reach_closed(self, domain, spec):
         state = self._post_process_state(domain, spec, sent=True)
-        state, plan = decide(state, signals(wrap_up_request=True, raw_message="no that's all, thanks"), domain, spec)
+        state, plan = decide(
+            state, signals(wrap_up_request=True, raw_message="no that's all, thanks"), domain, spec
+        )
         assert plan.phase == Phase.CLOSED
+
+
+class TestPostProcessCanStillAnswer:
+    """A caller who says "that's all, thanks" and then thinks of one more
+    question must get a real answer.
+
+    Found in a live run: asked for the appeal deadline right after wrapping
+    up, the agent said it did not have the deadline in front of it. It had
+    been reading that exact field one turn earlier — POST_PROCESS was
+    assembling a strict subset of the case data, so the caller lost access by
+    being polite. Entitlement had not changed; only the phase name had.
+    """
+
+    def _state(self):
+        state = make_state(phase=Phase.POST_PROCESS)
+        state.facts.verified_party_id = "P9"
+        state.memory.confirmed_case_id = "CL-2048"
+        state.facts.wrap_up_signalled = True
+        return state
+
+    def test_post_process_sees_the_same_case_data_as_process_case(self, domain, spec):
+        wrap = self._state()
+        _, post_plan = decide(wrap, signals(), domain, spec)
+
+        working = make_state(phase=Phase.PROCESS_CASE)
+        working.facts.verified_party_id = "P9"
+        working.memory.confirmed_case_id = "CL-2048"
+        _, process_plan = decide(working, signals(), domain, spec)
+
+        post_claim = post_plan.visible_facts.get("claim") or {}
+        process_claim = process_plan.visible_facts.get("claim") or {}
+        assert post_claim == process_claim
+        assert post_claim.get("appeal_deadline")          # the field that was missing
+
+    def test_answers_there_are_still_grounded_and_non_committal(self, domain, spec):
+        """More data means the same guards have to apply — otherwise this
+        fix would trade a bad answer for an unguarded one."""
+        _, plan = decide(self._state(), signals(), domain, spec)
+        ids = [d.id for d in plan.directives]
+        assert "GROUNDING_ONLY" in ids
+        assert "NO_COMMITMENT" in ids
+
+    def test_an_unconsented_representative_still_gets_reduced_scope(self, domain, spec):
+        """The one entitlement difference that DOES survive into POST_PROCESS."""
+        state = self._state()
+        state.facts.caller_role = CallerRole.REPRESENTATIVE
+        state.facts.consent_status = ConsentStatus.PENDING
+        _, plan = decide(state, signals(), domain, spec)
+        claim = plan.visible_facts.get("claim") or {}
+        assert "denial_reason" not in claim
+        assert plan.visible_facts.get("disclosure_note")
 
 
 class TestConsentIsGrounded:
@@ -437,26 +486,3 @@ class TestConsentIsGrounded:
         state.memory.confirmed_case_id = "CL-2048"
         state, plan = decide(state, signals(), domain, spec)
         assert "consent" not in plan.visible_facts
-
-
-class TestSendTurnDirectivesDoNotContradict:
-    """The turn that sends the summary was simultaneously being told to OFFER
-    one. Both instructions were live, and which won was up to the model."""
-
-    def test_offer_is_dropped_on_the_turn_the_caller_says_yes(self, domain, spec):
-        state = make_state(phase=Phase.POST_PROCESS)
-        state.facts.verified_party_id = "P9"
-        state.memory.confirmed_case_id = "CL-2048"
-        state.facts.pending_action = PendingAction(
-            action_type="send_summary_email", requested_at_turn=0
-        )
-        _, plan = decide(
-            state,
-            signals(consent_response=True, turn_index=state.next_turn_index(),
-                    raw_message="yes please"),
-            domain, spec,
-        )
-        ids = [d.id for d in plan.directives]
-        assert "SEND_NOW" in ids
-        assert "OFFER_SUMMARY" not in ids
-        assert "CONSENT_REQUIRED" not in ids

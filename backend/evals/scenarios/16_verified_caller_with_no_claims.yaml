@@ -1,0 +1,23 @@
+id: verified_caller_with_no_claims
+description: >
+  A caller who verifies cleanly and has no claims on file at all. The last
+  unlit branch of RESOLVE_INTENT (NO_CANDIDATES_HELP), found by the coverage
+  report rather than by imagining scenarios — Ava Lopez (P7) exists in the
+  fixture set with zero claims, so this path was always reachable and never
+  reached.
+
+  The interesting property is what the agent must NOT do. "I have nothing on
+  file for you" is a disclosure about the account, so it has to stay on the
+  right side of the same rules: no invented claim, no promise that one will
+  appear, and a route forward rather than a dead end.
+tags: [core, intent_resolution, coverage]
+turns:
+  - user: "Hi, my name is Ava Lopez, policy POL-1044. My date of birth is 1990-08-21 and my SSN last four is 9180."
+    expect_phase: RESOLVE_INTENT
+  - user: "I'm calling to check on a claim I filed for a car repair last month."
+    # Still RESOLVE_INTENT: there is nothing to select, so the SOP cannot
+    # advance to case work. It must say so and offer a way forward.
+    expect_phase: RESOLVE_INTENT
+final:
+  verified_party_id: P7
+  confirmed_case_id: null

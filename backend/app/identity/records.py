@@ -55,9 +55,3 @@ def load_policyholders(path: str | Path) -> list[PolicyholderRecord]:
     return records
 
 
-def index_by_policy_number(records: list[PolicyholderRecord]) -> dict[str, PolicyholderRecord]:
-    return {r.policy_number: r for r in records}
-
-
-def index_by_party_id(records: list[PolicyholderRecord]) -> dict[str, PolicyholderRecord]:
-    return {r.party_id: r for r in records}

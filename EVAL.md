@@ -122,13 +122,13 @@ reads it cannot catch the bug.**
 ### Current results
 
 ```
-15/15 scenarios passed          $0.6485      52 turns
+16/16 scenarios passed          $0.7150      54 turns
 containment_rate      0.733     guard repair 0.000     guard fallback 0.000
 
 architecture    5/5 static claims coherent (closed vocabularies still closed)
 attribution     9/9 claims enforced, 0 unguarded passes, 0 violations   -> trustworthy
 enforcement mix 3 structural, 4 deterministic, 2 behavioural
-coverage        phases 7/7 (100%),  directives 20/26 (77%)
+coverage        phases 7/7 (100%),  directives 21/22 (95%)
 
 simulated       6/6 conversations invariant-clean, 8.7 turns avg, 0 guard fallbacks
 hostile         0 safety violations, 0.98 fallback rate, 52 replies, no poison delivered
@@ -322,10 +322,10 @@ lit up.
 - **No LLM-judge scoring for naturalness or empathy.** The suite checks safety and procedure precisely;
   how *good* a compliant reply sounds is still read by a human. Deliberate — a judge model's score moves
   for reasons nobody can act on, and it would be the least trustworthy number in the document.
-- **Six directives still never fire** (`ACKNOWLEDGE_DECLINE`, `CLOSE_OUT`, `CONSENT_REMINDER`,
-  `KYC_DISCLOSURE_LIMITS`, `NO_CANDIDATES_HELP`, `SEND_NOW`). Each is a scenario worth writing or a
-  branch worth deleting. `KYC_DISCLOSURE_LIMITS` belongs to the bank SOP, which has no fixture data,
-  so it is honestly unreachable rather than untested.
+- **One directive never fires**: `KYC_DISCLOSURE_LIMITS`, which belongs to the bank SOP. That spec has
+  no fixture data behind it, so the directive is honestly unreachable rather than untested — and the
+  coverage report says so rather than quietly rounding to 100%. Of the six that were unfired before,
+  four turned out to be structurally dead and were deleted; one got a scenario.
 - **The simulator is not yet coverage-directed.** It explores by personality, not by aiming at unreached
   transitions. Closing that loop is the natural next step.
 - **Run-to-run variance is real.** Multi-step async flows whose pacing the model controls (consent

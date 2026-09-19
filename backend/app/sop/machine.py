@@ -148,8 +148,6 @@ def _apply_emotion_and_abuse_counters(state: SessionState, signals: TurnSignals,
     facts = state.facts
     if signals.refusal:
         facts.refusal_count += 1
-    if signals.escalation_request:
-        facts.repeated_request_count += 1
 
     # This turn's words, available NOW — not last turn's deferred reading.
     deterministic_floor = deterministic_intensity_floor(signals.raw_message)

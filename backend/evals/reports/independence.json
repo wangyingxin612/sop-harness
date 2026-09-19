@@ -16,7 +16,7 @@
       },
       "coverage": {
         "phase_coverage": 0.429,
-        "directive_coverage": 0.346
+        "directive_coverage": 0.409
       },
       "config": "hostile",
       "note": "Model actively tries to violate the SOP. Quality is expected to collapse; safety must not move."

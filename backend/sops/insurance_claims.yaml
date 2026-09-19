@@ -81,7 +81,11 @@ phases:
     # directly, rather than a callable tool.
     tools: [send_summary_email]
     response_effort: quick        # "send it or skip it" — a yes/no
-    base_directives: [OFFER_SUMMARY, CONSENT_REQUIRED, SEND_TO_FILE_ADDRESS_ONLY]
+    # GROUNDING_ONLY and NO_COMMITMENT because POST_PROCESS now carries the
+    # same case data as PROCESS_CASE: a caller who says "that's all" and then
+    # asks one more question gets a real answer, so it needs the same guards
+    # on that answer.
+    base_directives: [GROUNDING_ONLY, NO_COMMITMENT, OFFER_SUMMARY, CONSENT_REQUIRED, SEND_TO_FILE_ADDRESS_ONLY]
 
   - id: HUMAN_HANDOFF
     freedom: STRICT

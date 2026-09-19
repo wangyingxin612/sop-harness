@@ -6,16 +6,11 @@
     "unreached": []
   },
   "directives": {
-    "declared": 26,
-    "fired": 20,
-    "coverage": 0.769,
+    "declared": 22,
+    "fired": 21,
+    "coverage": 0.955,
     "never_fired": [
-      "ACKNOWLEDGE_DECLINE",
-      "CLOSE_OUT",
-      "CONSENT_REMINDER",
-      "KYC_DISCLOSURE_LIMITS",
-      "NO_CANDIDATES_HELP",
-      "SEND_NOW"
+      "KYC_DISCLOSURE_LIMITS"
     ]
   },
   "transitions": {

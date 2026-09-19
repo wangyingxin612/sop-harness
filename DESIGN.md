@@ -696,9 +696,17 @@ So every directive declares the mechanism that actually backs it:
 | Backing | Meaning | Count |
 |---|---|---|
 | `structural` | The data or tool is absent; the model cannot do otherwise | 5 |
-| `deterministic` | Code decides; the directive supplies the words | 12 |
+| `deterministic` | Code decides; the directive supplies the words | 8 |
 | `guard` | An output rule blocks the reply if it is ignored | 6 |
 | `advisory` | **Nothing enforces this.** Tone only | 4 |
+
+Coverage then closes the loop from the other side: four of these were reported as *never having fired
+in any run*, and tracing the phase graph showed why — POST_PROCESS has exactly one entry, a wrap-up
+signal, so `wrap_up_signalled` is always true inside it and four branches written for a
+still-engaged caller could not be reached. They were not untested, they were dead. Deleted, along with
+a test that had been keeping them looking alive. Dead branches that read as thorough handling are
+worse than absent ones: they make a phase look more complicated than it is, and they are four more
+things a reader has to rule out.
 
 `advisory` is the honest category and the one worth watching: it is the share of the SOP that is hope
 rather than mechanism. `evals/architecture.py` fails if any directive has no declared backing, so the

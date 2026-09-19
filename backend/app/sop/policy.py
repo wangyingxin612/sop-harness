@@ -65,18 +65,6 @@ NO_CANDIDATES_HELP = Directive(
     id="NO_CANDIDATES_HELP",
     text="Nothing on file matches what the caller described so far — ask them to describe the claim differently, without implying anything is wrong on their end.",
 )
-CONSENT_REMINDER = Directive(
-    id="CONSENT_REMINDER",
-    text="A decision to send or skip the summary is still needed before this can close — ask plainly if it wasn't just answered.",
-)
-SEND_NOW = Directive(
-    id="SEND_NOW",
-    text=(
-        "The caller just agreed to receive the summary — call send_summary_email now, to the address "
-        "on file. Then confirm in one sentence that it's on its way, and ask whether there's anything "
-        "else they need. Do NOT sign off yet: the call isn't over until they say they're done."
-    ),
-)
 SEND_AND_CLOSE = Directive(
     id="SEND_AND_CLOSE",
     text=(
@@ -85,17 +73,6 @@ SEND_AND_CLOSE = Directive(
         "its way and close the call warmly. Do NOT ask whether there's anything else — they have "
         "already answered that."
     ),
-)
-CLOSE_OUT = Directive(
-    id="CLOSE_OUT",
-    text=(
-        "The summary has been handled and the caller has nothing further. Close the call warmly in one "
-        "or two sentences."
-    ),
-)
-ACKNOWLEDGE_DECLINE = Directive(
-    id="ACKNOWLEDGE_DECLINE",
-    text="The caller declined the summary email. Accept that without pushback and ask if there's anything else.",
 )
 REPRESENTATIVE_SCOPE_NOTE = Directive(
     id="REPRESENTATIVE_SCOPE_NOTE",
@@ -207,11 +184,7 @@ DIRECTIVE_BACKING: dict[str, str] = {
     "KYC_DISCLOSURE_LIMITS": STRUCTURAL,
 
     # --- code decides; the directive supplies the words -------------------
-    "SEND_NOW": DETERMINISTIC,
     "SEND_AND_CLOSE": DETERMINISTIC,
-    "CLOSE_OUT": DETERMINISTIC,
-    "ACKNOWLEDGE_DECLINE": DETERMINISTIC,
-    "CONSENT_REMINDER": DETERMINISTIC,
     "CONSENT_REQUIRED": DETERMINISTIC,
     "ACKNOWLEDGE_EMOTION": DETERMINISTIC,
     "STATE_FACTORS_REMAINING": DETERMINISTIC,
@@ -257,16 +230,60 @@ def all_directive_ids() -> set[str]:
     return ids
 
 
-def directive_backing(directive_id: str) -> str:
-    return DIRECTIVE_BACKING.get(directive_id, ADVISORY)
-
-
 def _refusal_directive(spec: SopSpec, facts) -> Directive:
     idx = int(hashlib.sha256(str(facts.off_topic_strikes).encode()).hexdigest(), 16) % max(
         1, len(spec.refusal_templates)
     )
     template = spec.refusal_templates[idx] if spec.refusal_templates else "I can't help with that here."
     return Directive(id="REFUSAL_TEMPLATE", text=f"Use this exact refusal, verbatim: \"{template}\"")
+
+
+def case_visible_facts(view, domain: DomainContext, reduced_scope: bool) -> dict:
+    """What a caller entitled to this case may see this turn.
+
+    ONE implementation, used by PROCESS_CASE and POST_PROCESS. The two used
+    to assemble different dicts, and POST_PROCESS's was a strict subset —
+    which quietly meant a caller who said "that's all, thanks" and then asked
+    one more question got told the agent no longer had the appeal deadline.
+    It did a turn earlier; the caller had simply been polite.
+
+    Phases are permission scopes (§7.1), and entitlement is what scopes them.
+    Between these two phases the entitlement is identical: same verified
+    identity, same confirmed case. `reduced_scope` — an unconsented
+    representative — is a real entitlement difference and is the only thing
+    that narrows this.
+    """
+    if view is None:
+        return {"claim": None, "guidance": []}
+    claim = view.record
+    full_claim = {
+        "case_id": claim.case_id,
+        "case_type": claim.case_type,
+        "status": claim.status,
+        "created_at": claim.created_at,
+        "summary": claim.summary,
+        "denial_reason": claim.denial_reason,
+        "documents_needed": list(claim.documents_needed),
+        "appeal_deadline": claim.appeal_deadline,
+        "expected_reimbursement_amount": claim.expected_reimbursement_amount,
+        "allowed_max_amount": claim.allowed_max_amount,
+        "net_pay": claim.net_pay,
+        "net_fee": claim.net_fee,
+        # pre-computed derivations (DESIGN.md §7.4 — the model does no arithmetic)
+        "unpaid_balance": view.unpaid_balance,
+        "days_until_appeal_deadline": view.days_until_appeal_deadline,
+        "appeal_deadline_passed": view.appeal_deadline_passed,
+    }
+    if reduced_scope:
+        return {
+            "claim": {k: v for k, v in full_claim.items() if k in _REDUCED_SCOPE_CLAIM_FIELDS},
+            "disclosure_note": (
+                "Representative without recorded policyholder consent: status and actionable "
+                "next steps only. Denial narrative and dollar amounts are withheld until consent "
+                "is recorded via request_consent."
+            ),
+        }
+    return {"claim": full_claim, "guidance": _gather_guidance(domain, claim)}
 
 
 def resolve(state: SessionState, domain: DomainContext, spec: SopSpec) -> TurnPlan:
@@ -385,36 +402,7 @@ def resolve(state: SessionState, domain: DomainContext, spec: SopSpec) -> TurnPl
             and facts.consent_status != ConsentStatus.APPROVED
         )
         if view:
-            claim = view.record
-            full_claim = {
-                "case_id": claim.case_id,
-                "case_type": claim.case_type,
-                "status": claim.status,
-                "created_at": claim.created_at,
-                "summary": claim.summary,
-                "denial_reason": claim.denial_reason,
-                "documents_needed": list(claim.documents_needed),
-                "appeal_deadline": claim.appeal_deadline,
-                "expected_reimbursement_amount": claim.expected_reimbursement_amount,
-                "allowed_max_amount": claim.allowed_max_amount,
-                "net_pay": claim.net_pay,
-                "net_fee": claim.net_fee,
-                # pre-computed derivations (DESIGN.md §7.4 — the model does no arithmetic)
-                "unpaid_balance": view.unpaid_balance,
-                "days_until_appeal_deadline": view.days_until_appeal_deadline,
-                "appeal_deadline_passed": view.appeal_deadline_passed,
-            }
-            if reduced_scope:
-                visible_facts = {
-                    "claim": {k: v for k, v in full_claim.items() if k in _REDUCED_SCOPE_CLAIM_FIELDS},
-                    "disclosure_note": (
-                        "Representative without recorded policyholder consent: status and actionable "
-                        "next steps only. Denial narrative and dollar amounts are withheld until consent "
-                        "is recorded via request_consent."
-                    ),
-                }
-            else:
-                visible_facts = {"claim": full_claim, "guidance": _gather_guidance(domain, claim)}
+            visible_facts = case_visible_facts(view, domain, reduced_scope)
 
         if facts.caller_role == CallerRole.REPRESENTATIVE:
             # Consent status has to be a GROUNDED fact, not something the model
@@ -458,6 +446,29 @@ def resolve(state: SessionState, domain: DomainContext, spec: SopSpec) -> TurnPl
                 "denial_reason": view.record.denial_reason,
                 "documents_needed": list(view.record.documents_needed),
             } if view else None,
+            # The FULL claim and guidance, the same as PROCESS_CASE.
+            #
+            # POST_PROCESS used to see only the summary fields, and that was
+            # a mistake about what a phase is. Phases are permission scopes
+            # (§7.1), and the caller's entitlement has not changed between
+            # these two: same verified identity, same confirmed case. The
+            # reduction was not minimum-necessary, it was an accident of the
+            # phase being named after the summary.
+            #
+            # It cost a real answer. A caller who said "that's all, thanks"
+            # and then asked one more question — "how long do I have to
+            # appeal?" — was told the agent did not have the deadline in
+            # front of it. The deadline was in the fixture. The agent had
+            # been reading it one turn earlier and lost access because the
+            # caller was polite.
+            **case_visible_facts(
+                view,
+                domain,
+                reduced_scope=(
+                    facts.caller_role == CallerRole.REPRESENTATIVE
+                    and facts.consent_status != ConsentStatus.APPROVED
+                ),
+            ),
             "resolved_intent": memory.resolved_intent,
             "file_email": policyholder.email if policyholder else None,
             "pending_action": facts.pending_action.action_type if facts.pending_action else None,
@@ -494,17 +505,23 @@ def resolve(state: SessionState, domain: DomainContext, spec: SopSpec) -> TurnPl
             # AFTER the email decision).
             directives = [d for d in directives if d.id not in ("OFFER_SUMMARY", "CONSENT_REQUIRED")]
 
+        # Only one branch, because POST_PROCESS has exactly one entry: a
+        # wrap-up signal (machine._process_case_phase_transition). So
+        # `wrap_up_signalled` is always true here, and a decision on the
+        # summary always closes the call on the same turn.
+        #
+        # There used to be four more branches — SEND_NOW for the
+        # not-yet-wrapping-up caller, ACKNOWLEDGE_DECLINE, CLOSE_OUT,
+        # CONSENT_REMINDER. The coverage report said none had ever fired, and
+        # tracing the phase graph showed why: none of them CAN. They were
+        # written for a POST_PROCESS that could be entered without a wrap-up
+        # intent, and that state stopped existing once wrap-up became sticky
+        # and a decided summary closed the call. Dead branches that read as
+        # thorough handling are worse than absent ones: they make the phase
+        # look more complicated than it is, and they are four more things a
+        # reader has to rule out.
         if just_approved:
-            # Asking "anything else?" after someone has already said they are
-            # done is a round trip that exists only because the system forgot.
-            # When the wrap-up intent is on file, send and close in one turn.
-            directives.append(SEND_AND_CLOSE if facts.wrap_up_signalled else SEND_NOW)
-        elif just_declined:
-            directives.append(ACKNOWLEDGE_DECLINE)
-        elif email_decided:
-            directives.append(CLOSE_OUT)
-        elif facts.pending_action is None:
-            directives.append(CONSENT_REMINDER)
+            directives.append(SEND_AND_CLOSE)
 
     return TurnPlan(
         phase=phase,
@@ -538,9 +555,3 @@ def _gather_guidance(domain: DomainContext, claim) -> dict:
     }
 
 
-def match_followup_for_message(domain: DomainContext, claim, message: str, intent: str | None) -> list[str]:
-    """Convenience used by ACT-time prompt assembly to add message-specific
-    followup guidance (DESIGN.md §7.6's alternative ladder) on top of the
-    always-included guidance from `_gather_guidance`."""
-    entries = domain.guideline_kb.match_followup(message, intent, bool(claim.documents_needed))
-    return [domain.guideline_kb.format_entry(e.text, claim) for e in entries]

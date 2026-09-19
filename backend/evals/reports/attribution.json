@@ -16,8 +16,8 @@
       "kind": "structural",
       "description": "send_summary_email is not offered to the model outside POST_PROCESS.",
       "mechanism": "policy._allowed_tools() per phase (DESIGN.md \u00a77.1)",
-      "occasions": 43,
-      "enforced": 43,
+      "occasions": 45,
+      "enforced": 45,
       "unguarded": [],
       "violations": [],
       "status": "enforced"
@@ -93,8 +93,8 @@
       "kind": "structural",
       "description": "No reply reaches the caller without a guard verdict recorded for it.",
       "mechanism": "orchestrator VERIFY stage (DESIGN.md \u00a77.9)",
-      "occasions": 52,
-      "enforced": 52,
+      "occasions": 54,
+      "enforced": 54,
       "unguarded": [],
       "violations": [],
       "status": "enforced"
