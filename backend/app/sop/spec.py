@@ -63,7 +63,7 @@ class EscalationSpec:
     # "attempts" counter — DESIGN.md §7.2's lockout and this file used to
     # state two different thresholds (3 vs 2) for the same event; resolved
     # in favor of the matcher's mismatch-based lock (see identity/matcher.py)
-    # and logged in PROGRESS.md.
+    # rather than leaving two thresholds describing one event.
     max_off_topic_strikes: int = 3
     max_injection_flags: int = 2
     off_topic_decay_after_turns: int = 2   # DESIGN.md §7.9 — counters must decay

@@ -69,7 +69,7 @@ def test_claims_for_party_filters_correctly(domain):
 
 
 class TestIntentInference:
-    """Found via live testing (PROGRESS.md): a caller who asks 'why was it
+    """Found via live testing (EVAL.md §4): a caller who asks 'why was it
     denied' has implied status=denied even without saying that word."""
 
     def test_denial_question_implies_denied_status_when_absent(self):

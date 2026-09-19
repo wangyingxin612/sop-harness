@@ -305,9 +305,9 @@ an early warning, and the only place it shows up.</div>
 """
 
 
-def _asr_section() -> str:
-    profiles = [("clean", "asr_clean.json"), ("light", "asr_light.json"),
-                ("moderate", "asr_moderate.json"), ("heavy", "asr_heavy.json")]
+def _noise_section() -> str:
+    profiles = [("clean", "latest.json"), ("light", "typo_light.json"),
+                ("moderate", "typo_moderate.json"), ("heavy", "typo_heavy.json")]
     rows = []
     for label, fname in profiles:
         rep = _load(fname)
@@ -323,17 +323,18 @@ def _asr_section() -> str:
     if not rows:
         return ""
     return f"""
-<h2>Transcription noise
-  <span class="why">The same suite replayed with the caller's messages degraded the way a speech-to-text
-  front end degrades them: spelled-out digits, homophone names, dropped punctuation.</span></h2>
+<h2>Typing noise
+  <span class="why">The same suite replayed with the caller's messages degraded the way people
+  actually type in a support chat: QWERTY-adjacent slips, doubled and dropped letters, no capitals or
+  punctuation, abbreviations, a stray keystroke inside a number.</span></h2>
 <div class="card"><table>
 <tr><th>Profile</th><th>Passed</th><th>Guard repair</th><th>Cost</th></tr>
 {''.join(rows)}
 </table></div>
-<div class="note">The interesting column is guard repair, not pass rate. Noise does not usually break
-the workflow; it makes the model work harder, and that shows up as repairs and cost before it ever
-shows up as a failure. Two real defects were found this way — spoken years failing to parse as dates,
-and homophone surnames locking out legitimate callers — both fixed in the identity matcher.</div>
+<div class="note">The interesting column is guard repair, not pass rate. Noise rarely breaks the
+workflow outright; it makes the model work harder, and that shows up as repairs and cost before it
+ever shows up as a failure. This axis is also why identity tolerance is edit-distance rather than
+phonetic (DESIGN.md §10.5): the noise model and the defence now describe the same failure.</div>
 """
 
 
@@ -441,7 +442,7 @@ ${s.get('total_cost_usd', 0):.4f} to run</div>
 {_attribution_section()}
 {_coverage_section()}
 {_summary_section(s)}
-{_asr_section()}
+{_noise_section()}
 {_cost_section()}
 {_scenarios_section(report)}
 <div class="note" style="margin-top:40px">

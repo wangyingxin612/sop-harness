@@ -105,7 +105,7 @@ def act(
         # tool-call JSON before any reply text, triggering the guard's
         # repair path on an otherwise-fine turn. The repair path recovers
         # correctly either way (that's what it's for), but a wider budget
-        # means it has to less often. See PROGRESS.md.
+        # means it has to less often.
         max_tokens=1536,
     )
 

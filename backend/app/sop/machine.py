@@ -275,7 +275,7 @@ def _resolve_intent_phase_transition(
     # became able to name). Checking confirmation before narrowing drops
     # that turn's "yes" on the floor — caught by live testing, not by the
     # pure-signals unit tests, which happened to always narrow and confirm
-    # on separate turns. See PROGRESS.md.
+    # on separate turns — found in live testing.
     if memory.candidate_case_id is None:
         _try_narrow_intent_candidate(state, domain)
 

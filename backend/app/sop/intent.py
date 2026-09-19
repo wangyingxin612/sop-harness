@@ -33,7 +33,7 @@ def merge_case_hints(hints: list[CaseHint]) -> CaseHint:
 # help narrow candidates (never to grant access). Found via live testing: a
 # caller who asks "why was it denied" has, in effect, stated status=denied
 # even if that exact word from the caller's own mouth was never captured as
-# a case_hint — see PROGRESS.md.
+# a case_hint — found in live testing (EVAL.md §4).
 _INTENT_IMPLIED_STATUS = {
     "denial_question": "denied",
     "appeal_request": "denied",

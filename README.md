@@ -7,10 +7,8 @@ naturally, strict where the SOP demands it and flexible where reasoning helps.
 **Read [DESIGN.md](DESIGN.md) for the full design rationale** — the problem framing, alternatives
 considered, the architecture, and every non-obvious decision with its reasoning. This file is the
 practical "how to run it" companion. **[EVAL.md](EVAL.md)** covers testing methodology and results.
-**[PROGRESS.md](PROGRESS.md)** is the build log — decisions, bugs and root causes, in the order they
-happened. Earlier entries cite figures the project has since moved past; DESIGN.md and EVAL.md are
-authoritative for the current state. Included because the most useful bugs here
-they were fixed — useful if you want to see the actual engineering process, not just the end state.
+DESIGN.md §10.6 and EVAL.md §4/§9 record the defects that changed the design, with root causes —
+the most useful of which were found by deploying and by adversarial evaluation, not by unit tests.
 
 ## What this is, in one paragraph
 
@@ -165,7 +163,7 @@ backend/evals/      scenario harness against the real API — scenarios, invaria
                     static-architecture checks, typo-noise suite, cost experiment,
                     simulated callers
 frontend/           React chat + Inspector + Operations board (Vite)
-DESIGN.md   EVAL.md   PROGRESS.md
+DESIGN.md   EVAL.md   README.md
 ```
 
 ## Known limitations

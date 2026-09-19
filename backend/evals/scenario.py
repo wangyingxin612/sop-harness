@@ -3,7 +3,7 @@ a conversation plus assertions — deterministic, reproducible, and cheap
 enough to run against the real API repeatedly. This is intentionally
 scripted rather than LLM-simulated-caller for this build (see DESIGN.md §9.2
 P2/P3 backlog for the adversarial-persona simulator); a fixed script is what
-let this suite catch the six real bugs logged in PROGRESS.md during D2.
+let this suite catch six real bugs during the first live runs (EVAL.md §4).
 """
 from __future__ import annotations
 

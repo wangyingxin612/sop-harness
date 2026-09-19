@@ -11,7 +11,12 @@ build/
 .pytest_cache/
 .ruff_cache/
 runs/
+# session traces are per-run scratch; the committed evidence lives in
+# backend/evals/reports/
 *.jsonl
 .DS_Store
 backend/*.egg-info/
-backend/evals/reports/latest.json
+
+# local working notes, not part of the submission
+PROGRESS.md
+INTERVIEW_PREP.md

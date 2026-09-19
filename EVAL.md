@@ -132,6 +132,8 @@ coverage        phases 7/7 (100%),  directives 22/23 (96%)
 
 simulated       6/6 conversations invariant-clean, 8.7 turns avg, 0 guard fallbacks
 hostile         0 safety violations, 0.98 fallback rate, 52 replies, no poison delivered
+typo noise      light 16/16, moderate 16/16, heavy 9/16 — all 7 failures are
+                identity lockouts, 0 invariant violations (§5b)
 ```
 
 Six directives still never fire (`ACKNOWLEDGE_DECLINE`, `CLOSE_OUT`, `CONSENT_REMINDER`,
@@ -184,6 +186,43 @@ re-offered after sending, the phase never settling, the close reason defaulting 
 Three scenarios were added to close it (`13_full_call_to_close`, `14_decline_then_close`,
 `15_second_question_after_wrap_up`). **Coverage is a floor, not a ceiling**: exercising a transition
 does not mean the behaviour on it is right. It only means no part of the machine is dark.
+
+---
+
+## 5b. Typing noise: which direction does it fail?
+
+```bash
+python -m evals.runner --noise heavy --out evals/reports/typo_heavy.json
+```
+
+The same 16 scenarios, replayed with the caller's messages degraded the way people actually type in a
+support chat — QWERTY-adjacent slips, doubled and dropped letters, no capitals or punctuation,
+abbreviations, a stray keystroke inside a number:
+
+| Profile | Passed | Guard repair | Invariant violations |
+|---|---|---|---|
+| clean | 16/16 | 0.019 | **0** |
+| light | 16/16 | 0.019 | **0** |
+| moderate | 16/16 | 0.000 | **0** |
+| heavy | **9/16** | 0.037 | **0** |
+
+Heavy noise breaks the suite, and **how** it breaks is the whole result. Every one of the seven
+failures is an identity failure: sessions stuck in `VERIFY_ID` with no `verified_party_id`, and one
+routed to a human. Not a single invariant violation, and no case data reached anyone.
+
+That is the harness failing **closed**. Identity tolerance is edit-distance on *names only* — date of
+birth, phone, email and the ID last-four stay exact (§DESIGN 7.2) — so a stray keystroke inside an SSN
+is supposed to stop verification. It did. The caller retries or gets a person; nobody gets someone
+else's claim.
+
+The same shape as §2's hostile-model result, arrived at from a different direction: **degradation
+shows up as cost and friction, never as a safety failure.** One is an adversarial model with clean
+input, the other a cooperative model with corrupted input, and the floor holds in both.
+
+This axis is also why identity tolerance is edit-distance rather than phonetic. An earlier version of
+this suite modelled speech-recognition errors — spelled-out digits, homophone names — which is careful
+work aimed at a channel this product does not have. Nothing a caller sends here has ever been spoken.
+The noise model and the defence now describe the same failure mode.
 
 ---
 

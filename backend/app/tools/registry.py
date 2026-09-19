@@ -2,7 +2,7 @@
 
 Only genuinely side-effecting tools are here (DESIGN.md §6's pseudo-tools —
 get_case_detail etc. — were simplified out of the runtime tool-use loop for
-this build; see PROGRESS.md and sops/insurance_claims.yaml's comment).
+this build; see sops/insurance_claims.yaml's comment).
 Appendix A: side-effecting tools execute synchronously, inside VERIFY, after
 the reply text has passed the guard and before the turn is emitted — except
 `request_consent`, which is deliberately asynchronous.

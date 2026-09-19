@@ -62,7 +62,7 @@ def summarize(results) -> dict:
     }
 
 
-def write_report(results, out_path: str | Path) -> None:
+def write_report(results, out_path: str | Path, derive_analyses: bool = True) -> None:
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     report = {
@@ -112,6 +112,13 @@ def write_report(results, out_path: str | Path) -> None:
     # HERE means they can never be stale relative to it. Keeping them as a
     # separate command someone has to remember is how a dashboard ends up
     # confidently describing last week's run.
+    #
+    # Only for the PRIMARY run: a noise run is a robustness probe, and letting
+    # it overwrite the headline attribution/coverage would quietly replace the
+    # clean evidence with a deliberately-degraded one.
+    if not derive_analyses:
+        print(f"\nWrote report to {out_path}")
+        return
     try:
         from evals.architecture import analyse as _arch
         from evals.attribution import analyse as _attrib

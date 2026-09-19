@@ -26,7 +26,7 @@ escalation:
 # privilege that belongs to any one phase). request_consent is here (not
 # just under VERIFY_ID) because a representative's need for expanded consent
 # can surface anywhere after verification too — found via live testing, see
-# PROGRESS.md.
+# live testing.
 always_available_tools: [transfer_to_human, request_consent]
 
 # How long a silence means before we act on it. The per-phase driver is
@@ -62,7 +62,7 @@ phases:
     # described in DESIGN.md §6 as pseudo-tools for explicit citation. For
     # this build they are simplified to direct-context injection (already in
     # visible_facts) + guard-enforced grounding, to avoid a real tool-use
-    # round trip for data that's already local — see PROGRESS.md. Only the
+    # round trip for data that's already local. Only the
     # genuine side effect is a real tool here.
     tools: [create_followup]
     # The phase where we routinely ask someone to go and FIND something —

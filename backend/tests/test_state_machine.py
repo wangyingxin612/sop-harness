@@ -172,7 +172,7 @@ class TestCrossCuttingEscalation:
         advance the phase, even if the same message happens to also carry
         identity data. The data is retained in memory (nothing is silently
         dropped) but does not purchase verification progress this turn —
-        see PROGRESS.md for the documented limitation this implies."""
+        see DESIGN.md §11 for the documented limitation this implies."""
         state = make_state()
         signals = verify_signals(
             scope=ScopeRing.OUT,

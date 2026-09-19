@@ -16,6 +16,7 @@ fires.
 """
 from __future__ import annotations
 
+import pathlib
 import sys
 import time
 from dataclasses import dataclass, field
@@ -230,18 +231,26 @@ if __name__ == "__main__":
     parser.add_argument("--dir", default=str(BACKEND_DIR / "evals" / "scenarios"))
     parser.add_argument(
         "--noise", default=None, choices=["light", "moderate", "heavy"],
-        help="re-run the same scenarios with ASR-style corrupted input (evals/typo_noise.py)",
+        help="re-run the same scenarios with chat-typo corrupted input (evals/typo_noise.py)",
+    )
+    parser.add_argument(
+        "--out", default=None,
+        help="report path. Defaults to reports/latest.json; a noise run should write "
+             "elsewhere so it does not overwrite the clean run's evidence.",
     )
     args = parser.parse_args()
 
     if args.noise:
-        print(f"ASR-noise profile: {args.noise}\n")
+        print(f"Typo-noise profile: {args.noise}\n")
     results = run_all(args.dir, filter_tag=args.tag, filter_id=args.id, noise_profile=args.noise)
     passed = sum(1 for r in results if r.passed)
     total_cost = sum(r.total_cost_usd for r in results)
     print(f"\n{passed}/{len(results)} scenarios passed. Total cost: ${total_cost:.4f}")
 
     from evals.report import write_report
-    write_report(results, BACKEND_DIR / "evals" / "reports" / "latest.json")
+
+    default_out = BACKEND_DIR / "evals" / "reports" / "latest.json"
+    out = pathlib.Path(args.out) if args.out else default_out
+    write_report(results, out, derive_analyses=(out == default_out))
 
     sys.exit(0 if passed == len(results) else 1)
