@@ -155,12 +155,12 @@ class TestCommitmentGuard:
 class TestContractGuard:
     def test_forbidden_case_id_blocks(self):
         plan = make_plan(forbidden_elements=("any case id",))
-        blocking, missing = check_contract("Your claim CL-2048 was denied.", plan)
+        blocking, missing, _unver = check_contract("Your claim CL-2048 was denied.", plan)
         assert blocking
 
     def test_forbidden_amount_blocks(self):
         plan = make_plan(forbidden_elements=("any dollar amount",))
-        blocking, missing = check_contract("The allowed max is $1,450.00.", plan)
+        blocking, missing, _unver = check_contract("The allowed max is $1,450.00.", plan)
         assert blocking
 
     # --- farewell / premature-close: was a prompt rule, now a guard rule.
@@ -180,7 +180,7 @@ class TestContractGuard:
     )
     def test_farewell_blocked_when_phase_forbids_closing(self, reply):
         plan = make_plan(phase=Phase.PROCESS_CASE, forbidden_elements=("a farewell or sign-off",))
-        blocking, _ = check_contract(reply, plan)
+        blocking, _, _unver = check_contract(reply, plan)
         assert blocking, f"should have blocked a premature sign-off: {reply!r}"
 
     @pytest.mark.parametrize(
@@ -193,7 +193,7 @@ class TestContractGuard:
     )
     def test_ordinary_replies_are_not_mistaken_for_a_sign_off(self, reply):
         plan = make_plan(phase=Phase.PROCESS_CASE, forbidden_elements=("a farewell or sign-off",))
-        blocking, _ = check_contract(reply, plan)
+        blocking, _, _unver = check_contract(reply, plan)
         assert blocking == [], f"false positive on: {reply!r}"
 
     @pytest.mark.parametrize(
@@ -209,28 +209,28 @@ class TestContractGuard:
     )
     def test_greetings_and_mid_reply_phrasing_are_not_sign_offs(self, reply):
         plan = make_plan(phase=Phase.PROCESS_CASE, forbidden_elements=("a farewell or sign-off",))
-        blocking, _ = check_contract(reply, plan)
+        blocking, _, _unver = check_contract(reply, plan)
         assert blocking == [], f"false positive on: {reply!r}"
 
     def test_farewell_allowed_where_the_phase_permits_closing(self):
         """POST_PROCESS/CLOSED don't carry the forbidden element, so the same
         sentence is fine there — the rule is phase-scoped, not global."""
         plan = make_plan(phase=Phase.POST_PROCESS, forbidden_elements=())
-        blocking, _ = check_contract("Thanks for calling, Margaret. Take care!", plan)
+        blocking, _, _unver = check_contract("Thanks for calling, Margaret. Take care!", plan)
         assert blocking == []
 
     def test_no_forbidden_hit_when_absent(self):
         plan = make_plan(forbidden_elements=("any case id", "any dollar amount"))
-        blocking, missing = check_contract("I can help you with that.", plan)
+        blocking, missing, _unver = check_contract("I can help you with that.", plan)
         assert blocking == []
 
     def test_missing_required_element_is_reported_not_blocking(self):
         plan = make_plan(required_elements=("an offered alternative identity factor",))
-        blocking, missing = check_contract("I still need more information to verify you.", plan)
+        blocking, missing, _unver = check_contract("I still need more information to verify you.", plan)
         assert blocking == []  # required-element misses never block (§7.11 append-only)
         assert "an offered alternative identity factor" in missing
 
     def test_present_required_element_not_reported_missing(self):
         plan = make_plan(required_elements=("an offered alternative identity factor",))
-        blocking, missing = check_contract("Could you give me your date of birth instead?", plan)
+        blocking, missing, _unver = check_contract("Could you give me your date of birth instead?", plan)
         assert missing == []

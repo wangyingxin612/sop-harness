@@ -71,10 +71,8 @@ DISPOSITIONS: dict[str, DispositionSpec] = {
         "ABANDONED_AFTER_SILENCE", ABANDONED,
         "Caller went silent; closed by the idle ladder", "none", False),
     # Deliberately distinct from silence. Someone who closes the tab has
-    # decided to leave; someone who goes quiet may have been interrupted, or
-    # may be reading, or may be on hold with their clinic. Same outcome
-    # class, different product problem — and the fix for one is not the fix
-    # for the other, so collapsing them would hide both.
+    # decided to leave; someone who goes quiet may be on hold with their
+    # clinic. Same outcome class, different product problem.
     "ABANDONED_WINDOW_CLOSED": DispositionSpec(
         "ABANDONED_WINDOW_CLOSED", ABANDONED,
         "Caller closed the window and did not return", "none", True),
@@ -90,9 +88,6 @@ DISPOSITIONS: dict[str, DispositionSpec] = {
     "TRANSFERRED_AGENT_JUDGEMENT": DispositionSpec(
         "TRANSFERRED_AGENT_JUDGEMENT", TRANSFERRED,
         "Automated agent judged a person was needed", "general", True),
-    "TRANSFERRED_OFF_TOPIC": DispositionSpec(
-        "TRANSFERRED_OFF_TOPIC", TRANSFERRED,
-        "Persistent off-topic requests", "general", True),
     "TRANSFERRED_INJECTION_ATTEMPTS": DispositionSpec(
         "TRANSFERRED_INJECTION_ATTEMPTS", TRANSFERRED,
         "Repeated attempts to manipulate the agent", "trust_and_safety", True),
@@ -104,31 +99,20 @@ DISPOSITIONS: dict[str, DispositionSpec] = {
         "Still in progress", "none", False),
 }
 
-# escalation_reason (set by machine.py / effects.py) -> disposition code.
-# Kept as an explicit table rather than string munging so that adding an
-# escalation reason without deciding its disposition is a visible omission
-# (see `_UNMAPPED` below) instead of a silent fallthrough.
-_REASON_TO_CODE = {
-    "caller_requested_human": "TRANSFERRED_CALLER_REQUEST",
-    "identity_verification_failed": "TRANSFERRED_IDENTITY_FAILED",
-    "repeated_prompt_injection_attempts": "TRANSFERRED_INJECTION_ATTEMPTS",
-    "repeated_off_topic_requests": "TRANSFERRED_OFF_TOPIC",
-    "agent_initiated_transfer": "TRANSFERRED_AGENT_JUDGEMENT",
-}
-
-_UNMAPPED = "TRANSFERRED_AGENT_JUDGEMENT"
-
-# Reasons that end a session without it being an escalation. They are handled
-# on the CLOSED branch of classify() rather than through _REASON_TO_CODE.
-_NON_ESCALATION_REASONS = {
-    "caller_inactive", "caller_window_closed", "caller_finished", "operator_closed",
-}
-
-
 def unmapped_end_reasons() -> set[str]:
-    """Registry entries no branch of classify() accounts for. Empty, or a
-    test fails — see tests/test_disposition.py."""
-    return set(END_REASONS) - set(_REASON_TO_CODE) - _NON_ESCALATION_REASONS
+    """End reasons whose disposition code is not in the table.
+
+    The reason -> code mapping used to be a second hand-written dict living
+    here, next to a set of exceptions, next to a third table in handoff.py.
+    Now the reason registry carries its own code and this only checks that
+    every code it names actually exists. A reason with `disposition=None` is
+    deliberate: an ordinary close cannot be classified from the reason alone,
+    because it depends on whether a case was worked and whether the summary
+    was sent."""
+    return {
+        r.id for r in END_REASONS.values()
+        if r.disposition is not None and r.disposition not in DISPOSITIONS
+    }
 
 
 def phases_reached(state: SessionState) -> set[str]:
@@ -171,16 +155,15 @@ def classify(state: SessionState) -> Disposition:
     facts = state.facts
     phase = state.phase
 
-    if phase == Phase.ABUSE_TERMINATED:
-        code = "TERMINATED_ABUSE"
+    ended = facts.ended
+    reason_spec = ended.spec if ended else None
 
-    elif phase == Phase.HUMAN_HANDOFF:
-        reason = facts.escalation_reason or ""
-        code = _REASON_TO_CODE.get(reason, _UNMAPPED)
+    if reason_spec is not None and reason_spec.disposition is not None:
+        code = reason_spec.disposition
         # A transfer that happened while third-party consent was outstanding
         # belongs in the authorisations queue, not the general one, whatever
-        # the proximate escalation reason was — the person who can unblock it
-        # is not the person a general transfer reaches.
+        # the proximate reason was — the person who can unblock it is not the
+        # person a general transfer reaches.
         if facts.consent_status == ConsentStatus.TIMED_OUT and code in (
             "TRANSFERRED_AGENT_JUDGEMENT",
             "TRANSFERRED_CALLER_REQUEST",
@@ -188,14 +171,10 @@ def classify(state: SessionState) -> Disposition:
             code = "TRANSFERRED_CONSENT_UNAVAILABLE"
 
     elif phase == Phase.CLOSED:
-        # Only silence is abandonment. A call closed because the caller said
-        # they were done, or because an operator closed it, is an ordinary
-        # ending and is classified by what actually happened in it.
-        if facts.escalation_reason == "caller_window_closed":
-            code = "ABANDONED_WINDOW_CLOSED"
-        elif facts.escalation_reason == "caller_inactive":
-            code = "ABANDONED_AFTER_SILENCE"
-        elif Phase.PROCESS_CASE.value not in phases_reached(state):
+        # An ordinary close (caller_finished / operator_closed) cannot be
+        # classified from the reason alone — it depends on what happened in
+        # the call. Abandonment codes come from the registry above.
+        if Phase.PROCESS_CASE.value not in phases_reached(state):
             code = "CLOSED_BEFORE_CASE_WORK"
         elif facts.email_sent:
             code = "SELF_SERVED_SUMMARY_SENT"

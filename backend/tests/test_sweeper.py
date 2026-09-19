@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from app.sop.machine import end_session
 from app.session.sweeper import idle_seconds, last_caller_activity, sweep
 from app.sop.disposition import classify
 from app.sop.spec import load_spec
@@ -102,9 +103,9 @@ def test_window_close_alone_does_not_close_the_session():
 
 
 def test_already_terminal_sessions_are_not_touched():
-    st = _session(minutes_since_caller=60, phase=Phase.HUMAN_HANDOFF)
+    st = _session(minutes_since_caller=60)
     st.session_id = "handed_off"
-    st.facts.escalation_reason = "caller_requested_human"
+    st.phase = end_session(st, "caller_requested_human", 0)
     store = FakeStore({"handed_off": st})
     assert sweep(store, _spec) == []
     assert classify(st).code == "TRANSFERRED_CALLER_REQUEST"

@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from app.api.main import app
 from app.session.store import STORE
+from app.sop.machine import end_session
 from app.sop.types import Phase, Turn
 
 
@@ -22,10 +23,11 @@ def _session(client, phase: Phase | None = None, reason: str | None = None, spok
     if spoken:
         st.transcript.append(Turn(turn_index=0, role="caller", text="hello, I have a question"))
         st.facts.turns_used = 1
-    if phase:
-        st.phase = phase
     if reason:
-        st.facts.escalation_reason = reason
+        # Phase comes from the reason now, not chosen alongside it.
+        st.phase = end_session(st, reason, 0)
+    elif phase:
+        st.phase = phase
     STORE.update(st)
     return sid
 

@@ -208,7 +208,7 @@ def test_matched_factor_type_not_double_counted_if_restated(records):
 
 class TestAsrRobustness:
     """Motivated by evidence, not theory: the ASR-noise suite
-    (evals/asr_noise.py) showed the agent locking out and transferring a
+    (evals/typo_noise.py) showed the agent locking out and transferring a
     legitimate caller on turn one, because heavy speech-recognizer output
     turned "Margaret Chen, DOB 1985-03-15" into "margret chan, march
     fifteenth nineteen eighty-five".
@@ -224,22 +224,22 @@ class TestAsrRobustness:
         "id_last4": "four four seven two",
     }
 
-    def test_legitimate_caller_verifies_through_heavy_asr_noise(self, records):
+    def test_legitimate_caller_verifies_through_heavy_typo_noise(self, records):
         state = apply_factors(MatchState(), records, self.ASR_HEAVY)
         assert state.is_verified
         assert state.verified_party_id == "P9"
         assert state.mismatch_count == 0
 
-    def test_the_phonetic_match_is_recorded_not_hidden(self, records):
+    def test_the_fuzzy_match_is_recorded_not_hidden(self, records):
         """A compliance reviewer must be able to see that the name matched by
         sound rather than exactly — otherwise the audit trail overstates how
         identity was established."""
-        from app.identity.matcher import MatchTier, phonetic_match_used
+        from app.identity.matcher import MatchTier, fuzzy_match_used
 
         state = apply_factors(MatchState(), records, self.ASR_HEAVY)
-        assert phonetic_match_used(state)
+        assert fuzzy_match_used(state)
         name_app = next(h for h in state.history if h.factor_type == "full_name")
-        assert name_app.tier == MatchTier.PHONETIC
+        assert name_app.tier == MatchTier.FUZZY
 
     def test_impostor_with_a_sound_alike_name_still_locks_out(self, records):
         state = apply_factors(
@@ -250,7 +250,7 @@ class TestAsrRobustness:
         assert not state.is_verified
         assert state.is_locked
 
-    def test_phonetic_fallback_applies_to_names_only(self, records):
+    def test_fuzzy_fallback_applies_to_names_only(self, records):
         """The high-entropy factors must stay exact. A near-miss SSN is a
         mismatch, not a 'close enough'."""
         from app.identity.matcher import MatchTier, records_matching_factor

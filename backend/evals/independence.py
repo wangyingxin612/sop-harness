@@ -197,6 +197,18 @@ def main() -> int:
                     help="also run the real models (costs money and several minutes)")
     args = ap.parse_args()
 
+    # Static architectural claims first: they need no model, no API key and
+    # no conversation, and a drifted vocabulary invalidates everything below
+    # it. Cheapest check, run earliest.
+    from evals.architecture import analyse as architecture_analyse
+
+    arch = architecture_analyse()
+    print("STATIC ARCHITECTURE")
+    for c in arch["claims"]:
+        print(f"  {c['status']:<9} {c['claim_id']}")
+        for f in c["failures"]:
+            print(f"      ! {f}")
+
     rows = [run_hostile()]
     if args.with_real:
         rows.append(run_real("all-fast", "fast"))
@@ -212,8 +224,11 @@ def main() -> int:
     }
     print("\nVERDICT:", "HOLDS" if verdict["holds"] else f"FALSIFIED by {verdict['failing_configs']}")
 
+    verdict["architecture_coherent"] = arch["summary"]["coherent"]
+    verdict["holds"] = verdict["holds"] and arch["summary"]["coherent"]
+
     OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(json.dumps({"rows": rows, "verdict": verdict}, indent=2))
+    OUT.write_text(json.dumps({"rows": rows, "architecture": arch, "verdict": verdict}, indent=2))
     print(f"Wrote {OUT}")
     return 0 if verdict["holds"] else 1
 

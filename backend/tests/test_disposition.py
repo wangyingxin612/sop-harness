@@ -11,19 +11,22 @@ from app.sop.disposition import (
     unmapped_end_reasons,
     DISPOSITIONS,
     TRANSFERRED,
-    _REASON_TO_CODE,
     classify,
     containment_rate,
 )
-from app.sop.types import END_REASONS, ConsentStatus, Phase, SessionState, Turn
+from app.sop.types import END_REASONS, ConsentStatus, EndState, Phase, SessionState, Turn
 
 APP = Path(__file__).resolve().parents[1] / "app"
 
 
 def _session(**facts) -> SessionState:
     st = SessionState(session_id="s", sop_name="insurance_claims")
+    reason = facts.pop("ended_reason", None)
     for k, v in facts.items():
         setattr(st.facts, k, v)
+    if reason:
+        st.facts.ended = EndState(reason=reason, at_turn=0)
+        st.phase = END_REASONS[reason].phase
     return st
 
 
@@ -53,31 +56,35 @@ def test_every_end_reason_in_the_registry_has_a_disposition():
     assert unmapped_end_reasons() == set()
 
 
-def test_every_assigned_reason_is_in_the_registry():
-    """The other direction: code must not invent a reason the registry has
-    never heard of, or it would classify as a generic transfer and nobody
-    would notice.
+def test_an_unknown_end_reason_is_impossible_to_express():
+    """Stronger than the scan this replaced.
 
-    The match is bounded to the assignment EXPRESSION — a quoted literal, a
-    parenthesised ternary, or a variable — rather than to a fixed window of
-    characters after the name. A first attempt used `text[m.end():m.end()+200]`
-    and picked up string literals from whatever happened to follow, which is
-    the same class of mistake as a detector that fires on nearby text instead
-    of on its target.
+    The previous version searched the source for `escalation_reason = "..."`
+    assignments and checked each against the registry. It was fragile — it
+    once missed a reason written as a ternary — and it was checking a
+    convention rather than a mechanism. Every termination now goes through
+    end_session(), which resolves the reason against the registry and raises
+    if it is absent. The failure mode is no longer "a reason nobody mapped";
+    it is a KeyError at the call site, on the first run.
     """
-    assign = re.compile(
-        r"escalation_reason\s*=\s*"
-        r"(\([^)]*\)"        # parenthesised expression, e.g. a ternary
-        r'|"[a-z_]+"'         # a bare string literal
-        r"|[A-Za-z_][\w.]*)"  # a variable or attribute
-    )
-    found = set()
-    for path in APP.rglob("*.py"):
-        for m in assign.finditer(path.read_text()):
-            found |= set(re.findall(r'"([a-z_]+)"', m.group(1)))
-    assert found, "scan found nothing — the pattern has drifted, fix the test"
-    invented = found - set(END_REASONS)
-    assert not invented, f"reasons assigned but not in END_REASONS: {sorted(invented)}"
+    from app.sop.machine import end_session
+
+    state = SessionState(session_id="s", sop_name="insurance_claims")
+    with pytest.raises(KeyError):
+        end_session(state, "a_reason_nobody_declared", 0)
+    assert state.facts.ended is None      # and nothing was half-written
+
+
+def test_ending_a_session_sets_the_phase_from_the_reason(spec, domain):
+    """Phase is a projection, not a parallel fact. This is what makes the
+    off-topic contradiction above unrepresentable rather than merely fixed."""
+    from app.sop.machine import end_session
+
+    for reason, r in END_REASONS.items():
+        state = SessionState(session_id="s", sop_name="insurance_claims")
+        phase = end_session(state, reason, 3)
+        assert phase == r.phase
+        assert state.facts.ended == EndState(reason=reason, at_turn=3)
 
 
 def test_client_may_not_assert_a_server_only_reason():
@@ -110,13 +117,12 @@ def test_in_progress_while_the_conversation_is_live():
     [
         ("caller_requested_human", "TRANSFERRED_CALLER_REQUEST"),
         ("identity_verification_failed", "TRANSFERRED_IDENTITY_FAILED"),
-        ("repeated_off_topic_requests", "TRANSFERRED_OFF_TOPIC"),
         ("repeated_prompt_injection_attempts", "TRANSFERRED_INJECTION_ATTEMPTS"),
         ("agent_initiated_transfer", "TRANSFERRED_AGENT_JUDGEMENT"),
     ],
 )
 def test_handoff_reasons_map_to_codes(reason, expected):
-    st = _session(escalation_reason=reason)
+    st = _session(ended_reason=reason)
     st.phase = Phase.HUMAN_HANDOFF
     assert classify(st).code == expected
 
@@ -124,9 +130,8 @@ def test_handoff_reasons_map_to_codes(reason, expected):
 def test_outstanding_consent_reroutes_the_transfer():
     """The proximate reason is 'the agent decided', but the person who can
     unblock it sits in authorisations, not the general queue."""
-    st = _session(escalation_reason="agent_initiated_transfer",
+    st = _session(ended_reason="agent_initiated_transfer",
                   consent_status=ConsentStatus.TIMED_OUT)
-    st.phase = Phase.HUMAN_HANDOFF
     d = classify(st)
     assert d.code == "TRANSFERRED_CONSENT_UNAVAILABLE"
     assert d.routing_hint == "authorisations"
@@ -136,21 +141,26 @@ def test_consent_reroute_does_not_override_a_security_outcome():
     """An injection-flagged transfer belongs with trust and safety even if a
     consent request happened to be outstanding — the security signal is the
     one that decides who should be reading this."""
-    st = _session(escalation_reason="repeated_prompt_injection_attempts",
+    st = _session(ended_reason="repeated_prompt_injection_attempts",
                   consent_status=ConsentStatus.TIMED_OUT)
-    st.phase = Phase.HUMAN_HANDOFF
     assert classify(st).code == "TRANSFERRED_INJECTION_ATTEMPTS"
 
 
-def test_abuse_termination():
-    st = _session()
-    st.phase = Phase.ABUSE_TERMINATED
-    assert classify(st).code == "TERMINATED_ABUSE"
+def test_persistent_off_topic_terminates_rather_than_transferring():
+    """Writing the end-reason registry exposed a live contradiction: the
+    machine sent this reason to ABUSE_TERMINATED while the disposition table
+    called it a transfer — a code that could never fire, because classify()
+    branches on phase first. It mattered beyond tidiness: TRANSFERRED counts
+    in the containment denominator and TERMINATED does not."""
+    st = _session(ended_reason="repeated_off_topic_requests")
+    assert st.phase == Phase.ABUSE_TERMINATED
+    d = classify(st)
+    assert d.code == "TERMINATED_ABUSE"
+    assert d.outcome_class != TRANSFERRED
 
 
 def test_silence_close_is_abandonment_not_containment():
-    st = _session(escalation_reason="caller_inactive")
-    st.phase = Phase.CLOSED
+    st = _session(ended_reason="caller_inactive")
     d = classify(st)
     assert d.code == "ABANDONED_AFTER_SILENCE"
     assert d.outcome_class != CONTAINED

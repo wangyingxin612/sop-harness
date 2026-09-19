@@ -16,16 +16,25 @@ import yaml
 from app.sop.types import Phase, StreamPolicy, Tier
 
 
-# How much WORK a caller has to do before they can answer this phase's
-# typical question. This — not the vertical — is what should drive how long
-# we wait in silence before assuming someone has gone.
+# How long to wait in silence before acting, per phase.
 #
-# An earlier version of this idea said "a bank SOP can be configured more
-# patient than an insurance one", which was reaching for a vertical-shaped
-# difference that doesn't exist: "what's your date of birth" takes the same
-# few seconds in both industries, and "go find your pathology report" takes
-# minutes in both. The real vertical-level difference runs the OTHER way and
-# is about security, not patience — see SopSpec.max_session_idle_seconds.
+# The driver is how much WORK the caller has to do to answer — a property of
+# the question, not of the industry. An earlier version of this idea claimed
+# a bank SOP could be configured more patient than an insurance one; that was
+# reaching for a vertical-shaped difference that does not exist. "What's your
+# date of birth" takes the same few seconds in both, and "go find your
+# pathology report" takes minutes in both. The one genuine per-vertical
+# number runs the OTHER way and is about security — see
+# SopSpec.max_session_idle_seconds.
+#
+# ONE NUMBER PER PHASE, AND ONE OWNER. This used to be a base figure that the
+# client then adjusted by estimated reading time plus a complexity allowance
+# derived from counting question marks and list items. Those terms moved a
+# ninety-second budget by about ten seconds — precision theatre on a number
+# nobody had calibrated — while splitting ownership of the timeout across a
+# client clock, a second client clock that did not pause, and a server sweep.
+# Three clocks, two owners, for "when do we give up". The server owns the
+# TTL; the client displays it and reports activity.
 RESPONSE_EFFORT_SECONDS = {
     "quick": 90,          # a fact they already know: a date of birth, yes/no
     "considered": 150,    # a choice or a judgement: which of these claims

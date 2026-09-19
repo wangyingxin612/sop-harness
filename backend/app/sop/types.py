@@ -59,25 +59,119 @@ class ConsentStatus(str, Enum):
 IDENTITY_FACTOR_TYPES = ("full_name", "dob", "phone", "email", "id_last4")
 
 
-# Every reason a session can end, in one place.
+# Every reason a session can end, in one place — and every projection of it
+# derived rather than maintained.
 #
-# This started as string literals scattered across machine.py, effects.py,
-# the close endpoint and the sweeper, with a test that scanned the source to
-# check each had a disposition mapped. That test then failed to catch a
-# reason written as a ternary — the guard was as fragile as the thing it was
-# guarding. A registry makes the question "is this reason known?" answerable
-# by asking, rather than by parsing.
-END_REASONS: dict[str, str] = {
-    "caller_requested_human": "the caller asked for a person",
-    "identity_verification_failed": "identity could not be established",
-    "repeated_prompt_injection_attempts": "repeated attempts to manipulate the agent",
-    "repeated_off_topic_requests": "persistent out-of-scope requests",
-    "agent_initiated_transfer": "the agent judged a person was needed",
-    "caller_inactive": "silence past the SOP's ceiling",
-    "caller_window_closed": "the window was closed and never came back",
-    "caller_finished": "the caller said they were done",
-    "operator_closed": "closed from the operations side",
-}
+# This started as string literals scattered across four modules, with three
+# separate hand-written tables translating between them: reason -> disposition
+# code, reason -> handoff guidance, and reason -> terminal phase chosen inline
+# at each call site. Keeping three tables in sync by hand is the same disease
+# as the guard's contract vocabulary and as SEND_NOW: a value added on one
+# side and forgotten on another produces no error, just an enforcement or a
+# label that quietly stops working.
+#
+# So there is one authored representation — the reason — and the phase, the
+# disposition and the handoff guidance are all read out of it. Adding a way
+# for a session to end is now one entry, and a missing field is a TypeError
+# at import rather than a silent default months later.
+
+
+@dataclass(frozen=True)
+class EndReason:
+    id: str
+    description: str
+    # Which terminal phase this projects to. The phase is a PROJECTION of the
+    # reason, never a parallel fact — see machine.end_session().
+    phase: "Phase"
+    # The disposition code, or None when it cannot be known from the reason
+    # alone (an ordinary close depends on whether a case was worked and
+    # whether the summary was sent — see disposition.classify()).
+    disposition: str | None
+    # What the receiving human is told, when this is a transfer.
+    next_step: str | None = None
+    # May a CLIENT assert this reason? A browser can say the caller gave up.
+    # It does not get to declare an identity failure — that is a conclusion
+    # only the server is entitled to reach.
+    client_assertable: bool = False
+
+
+def _end_reasons() -> dict[str, EndReason]:
+    P = Phase
+    return {r.id: r for r in (
+        EndReason(
+            "caller_requested_human", "the caller asked for a person",
+            P.HUMAN_HANDOFF, "TRANSFERRED_CALLER_REQUEST",
+            "Caller asked for a person directly — no persuasion needed, just continue "
+            "where this left off.",
+        ),
+        EndReason(
+            "identity_verification_failed", "identity could not be established",
+            P.HUMAN_HANDOFF, "TRANSFERRED_IDENTITY_FAILED",
+            "Identity could not be verified through the automated line. Re-verify manually "
+            "with photo ID or account-specific knowledge before discussing any case.",
+        ),
+        EndReason(
+            "repeated_prompt_injection_attempts", "repeated attempts to manipulate the agent",
+            P.HUMAN_HANDOFF, "TRANSFERRED_INJECTION_ATTEMPTS",
+            "Caller's messages repeatedly attempted to manipulate the automated system. "
+            "Proceed with normal verification; no case data was ever exposed to the agent.",
+        ),
+        # ABUSE_TERMINATED, not HUMAN_HANDOFF. Writing the registry exposed a
+        # contradiction that had been live the whole time: machine.py sent
+        # this reason to ABUSE_TERMINATED while the disposition table mapped
+        # it to TRANSFERRED_OFF_TOPIC — a code that could never fire, because
+        # classify() branches on phase first. The SOP's own ABUSE_CLOSING
+        # copy ("repeated off-topic requests mean the session needs to end
+        # here") says termination is the intended behaviour, so the label was
+        # what was wrong. It also mattered: TRANSFERRED counts in the
+        # containment denominator and TERMINATED does not.
+        EndReason(
+            "repeated_off_topic_requests", "persistent out-of-scope requests",
+            P.ABUSE_TERMINATED, "TERMINATED_ABUSE",
+        ),
+        EndReason(
+            "agent_initiated_transfer", "the agent judged a person was needed",
+            P.HUMAN_HANDOFF, "TRANSFERRED_AGENT_JUDGEMENT",
+            "The automated agent judged this needed a person — see the emotional state and "
+            "attempted paths below for why.",
+        ),
+        EndReason(
+            "caller_inactive", "silence past the SOP's ceiling",
+            P.CLOSED, "ABANDONED_AFTER_SILENCE", client_assertable=True,
+        ),
+        EndReason(
+            "caller_window_closed", "the window was closed and never came back",
+            P.CLOSED, "ABANDONED_WINDOW_CLOSED",
+        ),
+        EndReason(
+            "caller_finished", "the caller said they were done",
+            P.CLOSED, None, client_assertable=True,
+        ),
+        EndReason(
+            "operator_closed", "closed from the operations side",
+            P.CLOSED, None, client_assertable=True,
+        ),
+    )}
+
+
+END_REASONS: dict[str, EndReason] = _end_reasons()
+
+# Reasons a browser is allowed to assert via the close endpoint.
+CLIENT_CLOSE_REASONS: frozenset[str] = frozenset(
+    r.id for r in END_REASONS.values() if r.client_assertable
+)
+
+
+@dataclass(frozen=True)
+class EndState:
+    """How and when this session ended. The single authored fact; phase and
+    disposition are read out of it."""
+    reason: str
+    at_turn: int
+
+    @property
+    def spec(self) -> EndReason:
+        return END_REASONS[self.reason]
 
 
 class ScopeRing(str, Enum):
@@ -173,8 +267,8 @@ class SessionFacts:
     candidate_party_ids: list[str] = field(default_factory=list)  # ambiguous-candidate tracking
     # True when a name matched by sound rather than exactly. Surfaced rather
     # than hidden so the inspector and the audit trail never overstate how
-    # identity was established (app/identity/phonetic.py).
-    phonetic_match_used: bool = False
+    # identity was established (app/identity/fuzzy.py).
+    fuzzy_match_used: bool = False
 
     # representative / consent (DESIGN.md §7.10)
     representative_of_party_id: Optional[str] = None
@@ -207,7 +301,10 @@ class SessionFacts:
 
     # set only when transition() routes to HUMAN_HANDOFF / ABUSE_TERMINATED —
     # the source of truth for "why", used by policy.py and the handoff packet
-    escalation_reason: Optional[str] = None
+    # The single authored fact about how this session ended. Phase and
+    # disposition are PROJECTIONS of it (see END_REASONS), never parallel
+    # state that has to be kept in step.
+    ended: Optional[EndState] = None
     # The browser told us the tab was closing (pagehide, sent with keepalive).
     # EVIDENCE, not proof: pagehide also fires on a refresh or a navigation.
     # It only becomes a conclusion once the session then stays silent past
@@ -276,6 +373,10 @@ class TurnSignals:
     confirms_proposed_case: Optional[bool] = None   # True/False/None=unaddressed
     wrap_up_request: bool = False
     consent_response: Optional[bool] = None          # for the POST_PROCESS email action gate
+    # The caller explicitly asked us to seek the policyholder's
+    # authorisation. An instruction, not a judgement call — acted on
+    # deterministically in transition(), like an explicit ask for a human.
+    requests_consent: bool = False
 
     raw_message: str = ""
     turn_index: int = 0
@@ -312,7 +413,6 @@ class TurnPlan:
     forbidden_elements: tuple[str, ...] = field(default_factory=tuple)
     model_tier: Tier = Tier.STRONG
     stream_policy: StreamPolicy = StreamPolicy.SENTENCE_GATED
-    terminal_reason: Optional[str] = None   # set when this turn ends in handoff/termination
     route: str = "normal"                   # "normal" | "human_handoff" | "refuse" | "abuse_terminated"
 
 

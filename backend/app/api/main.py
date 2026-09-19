@@ -24,8 +24,8 @@ from app.session.sweeper import idle_seconds, sweep
 from app.sop.disposition import DISPOSITIONS, classify, containment_rate
 from app.sop.domain import DomainContext, load_domain
 from app.sop.spec import SopSpec, load_spec
-from app.sop.machine import poll_pending_consent
-from app.sop.types import ConsentStatus, Phase, SessionState
+from app.sop.machine import end_session, poll_pending_consent
+from app.sop.types import CLIENT_CLOSE_REASONS, ConsentStatus, Phase, SessionState
 from app.api.schemas import serialize_state
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -177,11 +177,10 @@ def export_session(session_id: str):
     return render_transcript_html(state)
 
 
-# Which of the registry's end reasons a CLIENT is allowed to assert. Narrower
-# than END_REASONS on purpose: a browser may report that it gave up or that
-# the caller said they were done, but it does not get to declare an identity
-# failure or an abuse termination — those are the server's conclusions.
-CLOSE_REASONS = {"caller_inactive", "caller_finished", "operator_closed"}
+# Declared on the reason itself (types.EndReason.client_assertable) rather
+# than listed again here. A browser may report that it gave up; it does not
+# get to declare an identity failure — that is the server's conclusion.
+CLOSE_REASONS = CLIENT_CLOSE_REASONS
 
 
 @app.post("/api/sessions/{session_id}/close")
@@ -208,8 +207,7 @@ def close_session(session_id: str, reason: str):
     if reason not in CLOSE_REASONS:
         raise HTTPException(422, f"unknown close reason: {reason!r}; expected one of {sorted(CLOSE_REASONS)}")
     if state.phase not in (Phase.CLOSED, Phase.HUMAN_HANDOFF, Phase.ABUSE_TERMINATED):
-        state.phase = Phase.CLOSED
-        state.facts.escalation_reason = reason
+        state.phase = end_session(state, reason, len(state.transcript))
         STORE.update(state)
     return serialize_state(state, _get_spec(state.sop_name), _get_domain())
 

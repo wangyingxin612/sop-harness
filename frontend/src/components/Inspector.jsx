@@ -46,7 +46,7 @@ const DIRECTIVE_LABELS = {
   SESSION_CLOSING: "Close warmly",
 };
 
-function PhaseRail({ phase, facts }) {
+function PhaseRail({ phase, facts, ended }) {
   const terminal = TERMINALS[phase];
   const idx = PHASES.findIndex((p) => p.id === phase);
 
@@ -72,7 +72,7 @@ function PhaseRail({ phase, facts }) {
         <div className="rail-step is-current is-stopped">
           <span className="rail-dot">!</span>
           <span className="rail-label">{terminal}</span>
-          <span className="rail-state stopped">{facts.escalation_reason?.replace(/_/g, " ")}</span>
+          <span className="rail-state stopped">{ended?.reason?.replace(/_/g, " ")}</span>
         </div>
       )}
     </div>
@@ -410,19 +410,15 @@ const EFFORT_COPY = {
   offline_task: "something to go and find",
 };
 
-/** Why the bot is waiting as long as it is — the number plus its derivation,
- *  because a silence budget nobody can see is a silence budget nobody can
- *  argue with. The parts are shown separately so it is obvious which one to
- *  change when the timing is wrong. */
+/** Why the bot is waiting as long as it is. One number, from the SOP, so
+ *  there is exactly one thing to change when the timing is wrong. */
 function IdleNote({ policy, budgetSeconds }) {
   if (!policy) return null;
-  const readingAndComplexity = Math.max(0, (budgetSeconds ?? 0) - policy.base_seconds);
   return (
     <div className="gate-note idle-note">
-      Waiting up to <strong>{budgetSeconds ?? policy.base_seconds}s</strong> before checking in
-      — {policy.base_seconds}s because this phase asks for {EFFORT_COPY[policy.response_effort] || "an answer"}
-      {readingAndComplexity > 0 ? `, +${readingAndComplexity}s to read and act on the last reply` : ""}.
-      Hard cap {Math.round(policy.max_session_idle_seconds / 60)} min.
+      Waiting up to <strong>{policy.seconds}s</strong> before checking in — this phase asks for{" "}
+      {EFFORT_COPY[policy.response_effort] || "an answer"}. Hard cap{" "}
+      {Math.round(policy.max_session_idle_seconds / 60)} min, enforced server-side.
     </div>
   );
 }
@@ -451,7 +447,7 @@ export default function Inspector({ state, idleBudgetSeconds }) {
     <aside className="inspector-pane">
       <section className="card">
         <h3 className="card-title">Where the call is</h3>
-        <PhaseRail phase={state.phase} facts={facts} />
+        <PhaseRail phase={state.phase} facts={facts} ended={state.ended} />
         <GateNote phase={state.phase} facts={facts} />
         {!TERMINALS[state.phase] && (
           <IdleNote policy={state.idle_policy} budgetSeconds={idleBudgetSeconds} />

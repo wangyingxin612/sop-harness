@@ -30,12 +30,12 @@ def _slot_to_dict(slot: Slot) -> dict:
 
 
 def _idle_policy(state: SessionState, spec: SopSpec | None) -> dict | None:
-    """The silence budget, published so the CLIENT can run the timer.
+    """The silence budget for this phase.
 
-    The server could run it instead, but the two facts that matter most —
-    is this tab even in front of the person, and are they mid-sentence —
-    only exist in the browser. So the server owns the POLICY (how long a
-    given question is worth waiting for) and the client owns the CLOCK.
+    The server owns both the policy and the closing (session/sweeper.py) —
+    which is what makes an abandoned session end even when the browser is
+    gone, the case a client-side timer can never handle. The client displays
+    this and reports activity; it does not compute a budget of its own.
     """
     if spec is None:
         return None
@@ -44,7 +44,9 @@ def _idle_policy(state: SessionState, spec: SopSpec | None) -> dict | None:
         return None
     return {
         "response_effort": phase_spec.response_effort,
-        "base_seconds": phase_spec.idle_base_seconds,
+        # `seconds`, not `base_seconds`: there is nothing left for the client
+        # to add to it. The budget is one number owned by the server.
+        "seconds": phase_spec.idle_base_seconds,
         "max_session_idle_seconds": spec.max_session_idle_seconds,
     }
 
@@ -112,7 +114,7 @@ def serialize_state(
             "matched_factor_count": facts.matched_factor_count,
             "matched_factor_types": facts.matched_factor_types,
             "mismatch_count": facts.mismatch_count,
-            "phonetic_match_used": facts.phonetic_match_used,
+            "fuzzy_match_used": facts.fuzzy_match_used,
             "caller_role": facts.caller_role.value,
             "verified_party_id": facts.verified_party_id,
             "representative_of_party_id": facts.representative_of_party_id,
@@ -130,7 +132,10 @@ def serialize_state(
             "pending_action": facts.pending_action.action_type if facts.pending_action else None,
             "email_sent": facts.email_sent,
             "email_skipped": facts.email_skipped,
-            "escalation_reason": facts.escalation_reason,
+            "ended": (
+                {"reason": facts.ended.reason, "at_turn": facts.ended.at_turn}
+                if facts.ended else None
+            ),
         },
         "memory": {
             "identity_slots": {k: _slot_to_dict(v) for k, v in memory.identity_slots.items()},

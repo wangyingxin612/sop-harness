@@ -126,6 +126,9 @@ class GuardVerdict:
     ok: bool
     violations: list[str] = field(default_factory=list)
     missing_required: list[str] = field(default_factory=list)   # to APPEND, not block on
+    # Contract elements this turn asked for that nothing deterministically
+    # checked. Not a failure — an admission, surfaced instead of swallowed.
+    unverified: list[str] = field(default_factory=list)
 
 
 def _flatten_values(obj) -> list[str]:
@@ -238,52 +241,167 @@ def check_commitment(reply: str) -> list[str]:
     return violations
 
 
-# --- contract guard: matchers keyed to the exact strings policy.py emits.
-# Unmatched required/forbidden strings are intentionally not enforced here
-# (a keyword heuristic false-positive would hurt the naturalness the SOP is
-# trying to preserve) — see module docstring.
-_REQUIRED_MATCHERS = {
-    "an offered alternative identity factor": lambda r: bool(
+# --- contract guard -------------------------------------------------------
+#
+# CONTRACT_ELEMENTS is a CLOSED VOCABULARY. Every string policy.py can put in
+# required_elements or forbidden_elements must appear here, and each one must
+# say how it is enforced. There is no fall-through.
+#
+# It used to be two loose dicts with a `.get()` between them and policy.py
+# writing free text on the other side. An audit found 11 of 20 declared
+# elements had no matcher at all — including "an offer to request the
+# policyholder's consent", a live R8 requirement, and "sending to any email
+# address other than the one on file", which meant nothing would have caught
+# the agent offering to mail a summary somewhere new. They were not failing;
+# they were never running. Same disease as SEND_NOW.
+#
+# Three dispositions, and an element must pick one:
+#   a callable   — this rule checks it here
+#   DELEGATED(x) — deliberately enforced by rule family x instead; checking it
+#                  twice would double-flag and cost pointless repair rounds
+#   UNCHECKABLE(why) — no deterministic test exists. Admitted in the open so
+#                  it shows up in the guard verdict as unverified rather than
+#                  masquerading as a check that passed.
+
+_EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.]{2,}\b")
+
+_CONSENT_OFFER_RE = re.compile(
+    r"\b(consent|authoris|authoriz|permission|approval)\b", re.IGNORECASE
+)
+
+# Phrasings that confirm or deny a SPECIFIC identity field — the probing
+# channel an impostor uses to enumerate what is on file ("so the DOB is
+# wrong?"). R2: verification must never leak field-level feedback.
+_FIELD_CONFIRMATION_RE = re.compile(
+    r"\b(that (one )?(does not|doesn'?t|did not|didn'?t) match"
+    r"|(is|was) (in)?correct"
+    r"|(we|i) (do not|don'?t|couldn'?t|could not) (have|find) (a |that )?(record|match)"
+    r"|no (record|match) (for|of|on) (that|your)"
+    r"|(the|your) (date of birth|dob|phone|email|name|ssn|social) (is|was|does not|doesn'?t)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+class _Delegated:
+    def __init__(self, to: str):
+        self.to = to
+
+
+class _Uncheckable:
+    def __init__(self, why: str):
+        self.why = why
+
+
+def DELEGATED(to: str) -> _Delegated:  # noqa: N802 - reads as a declaration
+    return _Delegated(to)
+
+
+def UNCHECKABLE(why: str) -> _Uncheckable:  # noqa: N802
+    return _Uncheckable(why)
+
+
+def _sends_to_foreign_address(reply: str, plan: TurnPlan) -> bool:
+    """An email address in the reply that is not the one on file.
+
+    R8's send-to-file-address-only rule had no enforcement whatsoever. The
+    directive asked the model not to, and that was the entire mechanism."""
+    on_file = {
+        str(v).lower()
+        for v in _flatten_values(plan.visible_facts)
+        if "@" in str(v)
+    }
+    return any(addr.lower() not in on_file for addr in _EMAIL_RE.findall(reply))
+
+
+CONTRACT_ELEMENTS: dict[str, object] = {
+    # ---- required (assert PRESENT; appended when missing, never blocking) --
+    "an offered alternative identity factor": lambda r, p: bool(
         re.search(r"\b(date of birth|dob|phone|email|last four|social security|ssn|national id)\b", r, re.IGNORECASE)
     ),
-    "how many factors remain": lambda r: bool(re.search(r"\b(one|two|three|1|2|3)\b.{0,20}(more|remain|need|left)", r, re.IGNORECASE))
-    or bool(re.search(r"(remain|need|left).{0,20}\b(one|two|three|1|2|3)\b", r, re.IGNORECASE)),
-    "a restatement of the candidate claim (type, status, rough date)": lambda r: True,  # phrasing-free; length-based, best-effort
-    "a request to confirm": lambda r: "?" in r,
+    "how many factors remain": lambda r, p: bool(
+        re.search(r"\b(one|two|three|1|2|3)\b.{0,20}(more|remain|need|left)", r, re.IGNORECASE)
+    ) or bool(
+        re.search(r"(remain|need|left).{0,20}\b(one|two|three|1|2|3)\b", r, re.IGNORECASE)
+    ),
+    "a request to confirm": lambda r, p: "?" in r,
+    "an offer to request the policyholder's consent for full detail, if not already declined":
+        lambda r, p: bool(_CONSENT_OFFER_RE.search(r)),
+    "a restatement of the candidate claim (type, status, rough date)": UNCHECKABLE(
+        "no keyword test distinguishes a good restatement from a bad one; a heuristic "
+        "here would cost naturalness for no safety gain"
+    ),
+
+    # ---- forbidden (assert ABSENT; blocking) -------------------------------
+    "any case id": lambda r, p: bool(_CASE_ID_RE.search(r)),
+    "any dollar amount": lambda r, p: bool(_DOLLAR_RE.search(r)),
+    "any amount": lambda r, p: bool(_DOLLAR_RE.search(r)),
+    "a farewell or sign-off": lambda r, p: _looks_like_signoff(r),
+    "sending to any email address other than the one on file": _sends_to_foreign_address,
+    "confirmation that a record was found or not found for a specific field":
+        lambda r, p: bool(_FIELD_CONFIRMATION_RE.search(r)),
+
+    # ---- deliberately enforced elsewhere -----------------------------------
+    # check_disclosure compares against the real fixture values, digit-
+    # normalized. A second, cruder regex here would double-flag and burn
+    # repair rounds — an earlier `\b\d{4}\b` did exactly that, blocking a
+    # legitimate "2026" and "26 days".
+    "SSN or ID digits": DELEGATED("check_disclosure"),
+    "the denial narrative": DELEGATED("check_disclosure"),
+    "denial reason": DELEGATED("check_disclosure"),
+    "documents needed": DELEGATED("check_disclosure"),
+    "any claim fact": DELEGATED("check_disclosure"),
+    "any claim status": DELEGATED("check_disclosure"),
+    "any claim amount": DELEGATED("check_disclosure + check_grounding"),
+    "any amount or date not present in the claim data provided this turn":
+        DELEGATED("check_grounding"),
+    # On the refuse route the reply IS the template — policy.resolve() serves
+    # it verbatim, so there is no generated text to police.
+    "anything other than the refusal": DELEGATED("route=refuse serves template copy"),
+    "any answer to the off-topic question": DELEGATED("route=refuse serves template copy"),
 }
 
-_FORBIDDEN_MATCHERS = {
-    "any case id": lambda r: bool(_CASE_ID_RE.search(r)),
-    "any dollar amount": lambda r: bool(_DOLLAR_RE.search(r)),
-    "any amount": lambda r: bool(_DOLLAR_RE.search(r)),
-    "the denial narrative": lambda r: False,  # covered by disclosure guard; avoid double-flagging here
-    # NOT `\b\d{4}\b` — that also fires on case IDs, years, and day-counts
-    # (observed live: it blocked a legitimate "2026"/"26 days" reply and
-    # forced two pointless repairs before falling back to a safe template).
-    # The precise check already exists: check_disclosure() compares against
-    # the actual policyholder's real digits, digit-normalized. Deferring to
-    # it here avoids a duplicate, much cruder regex.
-    "SSN or ID digits": lambda r: False,
-    "a farewell or sign-off": lambda r: _looks_like_signoff(r),
-}
 
+def check_contract(reply: str, plan: TurnPlan) -> tuple[list[str], list[str], list[str]]:
+    """Returns (blocking_violations, missing_required, unverified).
 
-def check_contract(reply: str, plan: TurnPlan) -> tuple[list[str], list[str]]:
-    """Returns (blocking_violations, missing_required). Forbidden-element
-    hits block (they assert absence); missing required elements are
-    reported separately for appending, never blocking (see module docstring)."""
-    blocking = []
+    Forbidden-element hits block — they assert absence. Missing required
+    elements are appended rather than blocking (see module docstring).
+
+    `unverified` is the third return value and the reason this function was
+    rewritten: an element the vocabulary does not recognise, or one honestly
+    marked UNCHECKABLE, is now REPORTED. Previously it was skipped in silence,
+    so a renamed element looked exactly like a passing check. Loud enough to
+    see in the trace and the Inspector, quiet enough not to break a live call
+    over a naming mistake — and evals/architecture.py makes shipping one
+    impossible in the first place.
+    """
+    blocking: list[str] = []
+    missing: list[str] = []
+    unverified: list[str] = []
+
+    def resolve(element: str):
+        if element not in CONTRACT_ELEMENTS:
+            unverified.append(f"{element!r} is not in the guard's contract vocabulary")
+            return None
+        spec = CONTRACT_ELEMENTS[element]
+        if isinstance(spec, _Delegated):
+            return None                     # checked by another rule family
+        if isinstance(spec, _Uncheckable):
+            unverified.append(f"{element!r} is not deterministically checkable: {spec.why}")
+            return None
+        return spec
+
     for element in plan.forbidden_elements:
-        check = _FORBIDDEN_MATCHERS.get(element)
-        if check and check(reply):
+        check = resolve(element)
+        if check and check(reply, plan):
             blocking.append(f"forbidden element present: {element!r}")
 
-    missing = []
     for element in plan.required_elements:
-        check = _REQUIRED_MATCHERS.get(element)
-        if check and not check(reply):
+        check = resolve(element)
+        if check and not check(reply, plan):
             missing.append(element)
-    return blocking, missing
+    return blocking, missing, unverified
 
 
 # Words that show the reply is addressed to the caller and doing the job,
@@ -379,7 +497,12 @@ def check_reply(reply: str, plan: TurnPlan, domain: DomainContext, state: Sessio
     violations += check_grounding(reply, plan)
     violations += check_commitment(reply)
     violations += check_procedural_relevance(reply, plan)
-    contract_blocking, missing_required = check_contract(reply, plan)
+    contract_blocking, missing_required, unverified = check_contract(reply, plan)
     violations += contract_blocking
 
-    return GuardVerdict(ok=(len(violations) == 0), violations=violations, missing_required=missing_required)
+    return GuardVerdict(
+        ok=(len(violations) == 0),
+        violations=violations,
+        missing_required=missing_required,
+        unverified=unverified,
+    )

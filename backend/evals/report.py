@@ -113,11 +113,13 @@ def write_report(results, out_path: str | Path) -> None:
     # separate command someone has to remember is how a dashboard ends up
     # confidently describing last week's run.
     try:
+        from evals.architecture import analyse as _arch
         from evals.attribution import analyse as _attrib
         from evals.coverage import analyse as _cov
 
         (out_path.parent / "attribution.json").write_text(json.dumps(_attrib(report), indent=2))
         (out_path.parent / "coverage.json").write_text(json.dumps(_cov(report), indent=2))
+        (out_path.parent / "architecture.json").write_text(json.dumps(_arch(), indent=2))
     except Exception as exc:  # noqa: BLE001
         # A derived-analysis failure must not lose the run that cost money
         # and minutes to produce.

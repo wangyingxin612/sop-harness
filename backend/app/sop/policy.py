@@ -155,6 +155,112 @@ def _allowed_tools(
     return tuple(dict.fromkeys(available))  # dedup, keep order
 
 
+
+# ---------------------------------------------------------------------------
+# WHAT A DIRECTIVE IS, AND WHAT IT IS NOT
+#
+# A Directive is text injected into the system prompt. That is all it is.
+# Emitting one asks the model for something; it does not make the something
+# happen. The mechanism was introduced to keep instruction text out of the
+# generation code and make it inspectable and per-SOP configurable, and it is
+# good at that — the Inspector shows exactly which instructions were in force
+# on a turn, and swapping SOPs swaps the whole instruction set.
+#
+# The failure was letting it FEEL like enforcement. A directive has an ID, a
+# registry entry, a line in the trace and a chip in the UI, so adding one
+# reads like adding a control. Three bugs came from that and they are the
+# same bug: SEND_NOW never fired for an entire build (the model sent the
+# email anyway), ACKNOWLEDGE_EMOTION never fired (the model was polite
+# anyway), and scope had no output-side directive at all (the model stayed on
+# topic anyway). In every case the model was quietly doing the control
+# plane's job, and nothing noticed because the outcome looked right.
+#
+# So every directive now names the mechanism that actually backs it. Four
+# kinds, and only the first three are enforcement:
+#
+#   STRUCTURAL     the model cannot do otherwise — the data or the tool is
+#                  absent from the turn entirely
+#   DETERMINISTIC  code decides and the model only narrates the decision
+#   GUARD          an output rule blocks the reply if it is disobeyed
+#   ADVISORY       nothing enforces this. It shapes tone or phrasing, and if
+#                  the model ignores it the call is worse but not wrong.
+#
+# ADVISORY is the honest category and the important one. A harness whose
+# safety rests on advisory directives is a prompt with a ticket number.
+# evals/architecture.py fails if any directive has no declared backing, and
+# evals/attribution.py reports the mix, so the ratio cannot drift unseen.
+# ---------------------------------------------------------------------------
+
+STRUCTURAL = "structural"
+DETERMINISTIC = "deterministic"
+GUARD = "guard"
+ADVISORY = "advisory"
+
+DIRECTIVE_BACKING: dict[str, str] = {
+    # --- backed by the shape of the turn itself ---------------------------
+    # The model is not told "do not reveal the claim"; the claim is not in
+    # visible_facts. The directive only explains the refusal to the caller.
+    "NO_DISCLOSURE": STRUCTURAL,
+    "INDEX_ONLY": STRUCTURAL,
+    "GROUNDING_ONLY": STRUCTURAL,
+    "REPRESENTATIVE_SCOPE_NOTE": STRUCTURAL,
+    "KYC_DISCLOSURE_LIMITS": STRUCTURAL,
+
+    # --- code decides; the directive supplies the words -------------------
+    "SEND_NOW": DETERMINISTIC,
+    "SEND_AND_CLOSE": DETERMINISTIC,
+    "CLOSE_OUT": DETERMINISTIC,
+    "ACKNOWLEDGE_DECLINE": DETERMINISTIC,
+    "CONSENT_REMINDER": DETERMINISTIC,
+    "CONSENT_REQUIRED": DETERMINISTIC,
+    "ACKNOWLEDGE_EMOTION": DETERMINISTIC,
+    "STATE_FACTORS_REMAINING": DETERMINISTIC,
+    "HANDOFF_CLOSING": DETERMINISTIC,
+    "ABUSE_CLOSING": DETERMINISTIC,
+    "SESSION_CLOSING": DETERMINISTIC,
+    "REFUSAL_TEMPLATE": DETERMINISTIC,
+
+    # --- an output-guard rule blocks the reply if ignored -----------------
+    "NO_COMMITMENT": GUARD,              # check_commitment
+    "OFFER_SUMMARY": GUARD,              # forbidden: "a farewell or sign-off"
+    "SEND_TO_FILE_ADDRESS_ONLY": GUARD,  # forbidden: foreign email address
+    "KEEP_THE_CALL_MOVING": GUARD,       # check_procedural_relevance
+    "CONFIRM_CANDIDATE": GUARD,          # required: "a request to confirm"
+    "OFFER_ALTERNATIVE_FACTORS": GUARD,  # required: an offered alternative factor
+
+    # --- nothing enforces these. Said plainly. ----------------------------
+    # They improve the call and cost nothing if ignored. Listing them here is
+    # the point: the count of advisory directives is a number worth watching,
+    # because it is the share of the SOP that is hope rather than mechanism.
+    "VERIFY_RATIONALE": ADVISORY,
+    "DISAMBIGUATION_HELP": ADVISORY,
+    "NO_CANDIDATES_HELP": ADVISORY,
+    "ALTERNATIVE_LADDER_FIRST": ADVISORY,
+}
+
+
+def all_directive_ids() -> set[str]:
+    """Every directive the engine can emit: the constants in this module plus
+    whatever the loaded SOPs declare."""
+    import re as _re
+    from pathlib import Path as _Path
+
+    here = _Path(__file__)
+    # Not anchored to line start: _refusal_directive() builds its Directive
+    # inline on one line, and anchoring missed it — a scan that silently
+    # under-reports is the same failure mode this whole check exists to catch.
+    ids = set(_re.findall(r'Directive\(\s*\n?\s*id="([A-Z_]+)"', here.read_text()))
+    import yaml as _yaml
+
+    for f in (here.parents[2] / "sops").glob("*.yaml"):
+        ids |= set(_yaml.safe_load(f.read_text()).get("directive_texts", {}))
+    return ids
+
+
+def directive_backing(directive_id: str) -> str:
+    return DIRECTIVE_BACKING.get(directive_id, ADVISORY)
+
+
 def _refusal_directive(spec: SopSpec, facts) -> Directive:
     idx = int(hashlib.sha256(str(facts.off_topic_strikes).encode()).hexdigest(), 16) % max(
         1, len(spec.refusal_templates)
@@ -182,7 +288,6 @@ def resolve(state: SessionState, domain: DomainContext, spec: SopSpec) -> TurnPl
     forbidden: list[str] = []
     visible_facts: dict = {}
     route = "normal"
-    terminal_reason = None
 
     model_tier = phase_spec.model_tier if phase_spec else Tier.STRONG
     stream_policy = phase_spec.stream if phase_spec else StreamPolicy.SENTENCE_GATED
@@ -194,7 +299,6 @@ def resolve(state: SessionState, domain: DomainContext, spec: SopSpec) -> TurnPl
             Phase.ABUSE_TERMINATED: "abuse_terminated",
             Phase.CLOSED: "closed",
         }[phase]
-        terminal_reason = facts.escalation_reason
         directives = _base_directives(spec, phase)
         packet = build_handoff_packet(state, domain).as_dict() if phase == Phase.HUMAN_HANDOFF else None
         return TurnPlan(
@@ -208,7 +312,6 @@ def resolve(state: SessionState, domain: DomainContext, spec: SopSpec) -> TurnPl
             forbidden_elements=("any claim amount", "any claim status", "any PII value"),
             model_tier=model_tier,
             stream_policy=stream_policy,
-            terminal_reason=terminal_reason,
             route=route,
         )
 
@@ -412,7 +515,6 @@ def resolve(state: SessionState, domain: DomainContext, spec: SopSpec) -> TurnPl
         forbidden_elements=tuple(forbidden),
         model_tier=Tier.STRONG if upset and model_tier == Tier.FAST else model_tier,
         stream_policy=stream_policy,
-        terminal_reason=terminal_reason,
         route=route,
     )
 

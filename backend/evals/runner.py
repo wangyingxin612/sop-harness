@@ -25,7 +25,7 @@ from app.sop.spec import SopSpec, load_spec  # noqa: E402
 from app.sop.types import SessionState  # noqa: E402
 from app.session.orchestrator import run_turn  # noqa: E402
 from evals.invariants import run_invariants  # noqa: E402
-from evals.asr_noise import apply_noise  # noqa: E402
+from evals.typo_noise import apply_noise  # noqa: E402
 from evals.scenario import Scenario, TurnSpec, load_all_scenarios  # noqa: E402
 
 
@@ -130,7 +130,7 @@ def run_scenario(
     noise_profile: str | None = None,
 ) -> ScenarioResult:
     """`noise_profile` re-runs the SAME scenario with ASR-corrupted inputs
-    (evals/asr_noise.py). Same assertions, harder input — which is the whole
+    (evals/typo_noise.py). Same assertions, harder input — which is the whole
     point: a robustness suite that needed its own expectations wouldn't be
     measuring robustness, it would be measuring a different product."""
     result = ScenarioResult(scenario=scenario, noise_profile=noise_profile)
@@ -223,7 +223,7 @@ if __name__ == "__main__":
     parser.add_argument("--dir", default=str(BACKEND_DIR / "evals" / "scenarios"))
     parser.add_argument(
         "--noise", default=None, choices=["light", "moderate", "heavy"],
-        help="re-run the same scenarios with ASR-style corrupted input (evals/asr_noise.py)",
+        help="re-run the same scenarios with ASR-style corrupted input (evals/typo_noise.py)",
     )
     args = parser.parse_args()
 

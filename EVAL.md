@@ -19,11 +19,12 @@ documented in §4.
 
 | | Layer | Tests | Model calls | Cost | Speed |
 |---|---|---|---|---|---|
-| 1 | `backend/tests/` | The deterministic core: state machine, matcher, policy resolver, output guard | **none** | $0 | 281 tests, ~5s |
-| 2 | `evals/runner.py` | The whole system on scripted conversations, real model | real API | ~$0.80 | 15 scenarios, ~6 min |
+| 1 | `backend/tests/` | The deterministic core: state machine, matcher, policy resolver, output guard | **none** | $0 | 302 tests, ~5s |
+| 2 | `evals/runner.py` | The whole system on scripted conversations, real model | real API | ~$0.65 | 15 scenarios, ~6 min |
 | 3 | `evals/attribution.py` | **Which mechanism** caused each requirement to be met | none (reads layer 2) | $0 | instant |
 | 4 | `evals/independence.py` | Whether guarantees survive a hostile model | **none** | $0 | 15 scenarios, ~10s |
 | 5 | `evals/simulator.py` | Improvised conversations from personas with goals | real API | ~$0.05/call | unbounded |
+| 0 | `evals/architecture.py` | Whether two components that must agree still do | **none** | $0 | 5 claims, ~50ms |
 
 The separation matters. Layer 1 is a **guarantee** — those properties hold no matter what any model
 does, because no model is involved. Layer 2 is a **measurement** — it can regress when a prompt or a
@@ -121,9 +122,10 @@ reads it cannot catch the bug.**
 ### Current results
 
 ```
-15/15 scenarios passed          $0.7975      52 turns
+15/15 scenarios passed          $0.6485      52 turns
 containment_rate      0.733     guard repair 0.000     guard fallback 0.000
 
+architecture    5/5 static claims coherent (closed vocabularies still closed)
 attribution     9/9 claims enforced, 0 unguarded passes, 0 violations   -> trustworthy
 enforcement mix 3 structural, 4 deterministic, 2 behavioural
 coverage        phases 7/7 (100%),  directives 20/26 (77%)
@@ -137,6 +139,32 @@ Six directives still never fire (`ACKNOWLEDGE_DECLINE`, `CLOSE_OUT`, `CONSENT_RE
 branch worth deleting; `KYC_DISCLOSURE_LIMITS` belongs to the bank SOP, which has no fixture data, so
 it is honestly unreachable rather than untested. Reporting them is the point — an eval that only
 printed 15/15 would be hiding this.
+
+---
+
+## 4b. Layer 0: are the pieces still speaking the same language?
+
+Attribution asks "did the mechanism fire during this run?" — which can only speak about code paths a
+scenario reached. A whole class of defect lives underneath it: a mechanism that could never fire at
+all, because two namespaces that must agree have drifted.
+
+Every instance found in this project has one shape — **two hand-maintained tables and a silent
+`.get()`**:
+
+| Two tables | What silently stopped working |
+|---|---|
+| `policy.py` element strings ↔ guard matchers | **11 of 20** contract elements never checked, incl. R8's send-to-file-address rule |
+| reason ↔ disposition ↔ handoff guidance | A disposition code that could never be reached |
+| directive emitted ↔ behaviour enforced | `SEND_NOW` never fired for the whole project |
+| client event names ↔ metrics sink | A renamed event reads zero forever |
+
+`evals/architecture.py` checks five closed vocabularies in ~50ms with no model. It runs as part of
+`make test` *and* first in `make independence`, because a drifted vocabulary invalidates everything
+measured after it.
+
+The cure is not more care — care is what fails silently. It is making absence impossible to express:
+`end_session()` raises on an unknown reason; `check_contract()` reports an unrecognised element instead
+of skipping it; every directive declares which of four mechanisms backs it.
 
 ---
 
@@ -214,7 +242,7 @@ Two rules keep the loop honest, both learned the hard way in this project:
 ## 8. Layer 1: the deterministic core
 
 ```bash
-make test        # 281 tests, 0 model calls, ~5s
+make test        # 302 tests, 0 model calls, ~5s
 ```
 
 Covers the identity matcher (worked example, aliases, spoken digits, mismatch lock, ambiguity
@@ -294,6 +322,10 @@ lit up.
 - **No LLM-judge scoring for naturalness or empathy.** The suite checks safety and procedure precisely;
   how *good* a compliant reply sounds is still read by a human. Deliberate — a judge model's score moves
   for reasons nobody can act on, and it would be the least trustworthy number in the document.
+- **Six directives still never fire** (`ACKNOWLEDGE_DECLINE`, `CLOSE_OUT`, `CONSENT_REMINDER`,
+  `KYC_DISCLOSURE_LIMITS`, `NO_CANDIDATES_HELP`, `SEND_NOW`). Each is a scenario worth writing or a
+  branch worth deleting. `KYC_DISCLOSURE_LIMITS` belongs to the bank SOP, which has no fixture data,
+  so it is honestly unreachable rather than untested.
 - **The simulator is not yet coverage-directed.** It explores by personality, not by aiming at unreached
   transitions. Closing that loop is the natural next step.
 - **Run-to-run variance is real.** Multi-step async flows whose pacing the model controls (consent

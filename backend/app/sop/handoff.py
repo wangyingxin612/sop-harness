@@ -59,15 +59,6 @@ class HandoffPacket:
         }
 
 
-_REASON_NEXT_STEP = {
-    "caller_requested_human": "Caller asked for a person directly — no persuasion needed, just continue where this left off.",
-    "identity_verification_failed": "Identity could not be verified through the automated line (2 mismatches). Re-verify manually with photo ID or account-specific knowledge before discussing any case.",
-    "repeated_prompt_injection_attempts": "Caller's messages repeatedly attempted to manipulate the automated system. Proceed with normal verification; no case data was ever exposed to the automated agent.",
-    "repeated_off_topic_requests": "Caller persisted with off-topic requests after being redirected. Confirm what they actually need before proceeding.",
-    "agent_initiated_transfer": "The automated agent judged this needed a person — see the emotional state and attempted paths below for why.",
-}
-
-
 def build_handoff_packet(state: SessionState, domain: DomainContext) -> HandoffPacket:
     facts = state.facts
     memory = state.memory
@@ -105,7 +96,13 @@ def build_handoff_packet(state: SessionState, domain: DomainContext) -> HandoffP
     elif facts.peak_intensity == 1:
         emotional_state = "mild frustration / impatience"
 
-    reason = facts.escalation_reason or "unspecified"
+    # Guidance comes from the end-reason registry (types.END_REASONS), not
+    # from a table maintained here. This was the third hand-written map keyed
+    # on the same reason space; a reason added elsewhere silently got generic
+    # advice, which is the worst kind of wrong for a human picking up a call.
+    ended = facts.ended
+    reason = ended.reason if ended else "unspecified"
+    next_step = ended.spec.next_step if ended else None
     return HandoffPacket(
         reason=reason,
         verified=facts.is_verified(),
@@ -120,6 +117,7 @@ def build_handoff_packet(state: SessionState, domain: DomainContext) -> HandoffP
         emotional_state=emotional_state,
         off_topic_strikes=facts.off_topic_strikes,
         consent_status=facts.consent_status.value,
-        recommended_next_step=_REASON_NEXT_STEP.get(reason, "Review the transcript and confirm the caller's need before proceeding."),
+        recommended_next_step=next_step
+        or "Review the transcript and confirm the caller's need before proceeding.",
         disposition=classify(state).as_dict(),
     )

@@ -87,9 +87,9 @@ graceful-degradation behavior (DESIGN.md §7.10).
 All from the repo root:
 
 ```bash
-make test           # 281 tests, 0 model calls, ~5s
+make test           # 302 tests, 0 model calls, ~5s
 make independence   # the thesis test: hostile model, 0 API calls, ~10s
-make eval           # 15 scenarios against the real API, ~$0.80, ~6 min
+make eval           # 15 scenarios against the real API, ~$0.65, ~6 min
 make simulate N=6   # improvising simulated callers, ~$0.15/conversation
 make eval-one ID=margaret_chen_happy_path
 ```
@@ -156,7 +156,7 @@ backend/app/
 backend/sops/       insurance_claims.yaml — the SOP spec (DESIGN.md §6)
                     bank_kyc.yaml — a second vertical, to keep §6's claim falsifiable
 backend/fixtures/   the provided starter data
-backend/tests/      234 pytest tests, no model calls
+backend/tests/      302 pytest tests, no model calls
 backend/evals/      scenario harness against the real API — scenarios, invariants, runner,
                     JSON + HTML reports, ASR-noise suite, model-routing cost experiment
 frontend/           React chat + Inspector + Operations board (Vite)

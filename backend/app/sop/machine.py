@@ -21,8 +21,11 @@ from app.sop.intent import apply_intent_inference, merge_case_hints, resolve_can
 from app.sop.policy import resolve
 from app.sop.spec import SopSpec
 from app.sop.types import (
+    END_REASONS,
     TERMINAL_PHASES,
+    CallerRole,
     ConsentStatus,
+    EndState,
     Phase,
     PendingAction,
     ScopeRing,
@@ -188,34 +191,22 @@ def _identity_phase_transition(
     # (The centralized check in transition() is kept as a defensive fallback
     # for a state that somehow arrives already locked.)
     if facts.verification_status == VerificationStatus.LOCKED:
-        facts.escalation_reason = "identity_verification_failed"
-        return Phase.HUMAN_HANDOFF
+        return end_session(state, "identity_verification_failed", signals.turn_index)
     if facts.verification_status == VerificationStatus.VERIFIED:
         return Phase.RESOLVE_INTENT
     return Phase.VERIFY_ID
 
 
-def poll_pending_consent(state: SessionState, domain: DomainContext) -> None:
-    """Advance a pending consent request by one step (DESIGN.md §7.10).
+def _advance_consent(state: SessionState, domain: DomainContext) -> None:
+    """Move a consent request one step along its fixture sequence.
 
-    Called from two places: `transition()`, so a caller turn never observes
-    stale consent, and the API's wall-clock poll endpoint, so a caller who
-    says nothing at all still sees it resolve. Public (not `_`-prefixed)
-    because of the second caller — a waiting representative is exactly the
-    case this has to handle, and it cannot be served from inside a turn.
-
-    Why this is NOT the model's job: a real asynchronous approval doesn't
-    wait for an agent to decide it's time to check — it resolves on its own
-    schedule and the agent observes the result. Leaving the polling cadence
-    to the model's judgement made a real behavior (does consent eventually
-    arrive?) depend on a stylistic choice (does the agent re-check when
-    asked, or proactively?), which showed up as eval flakiness. Moving the
-    cadence into the state machine removes the model from the loop entirely:
-    `request_consent` *initiates*, the machine *observes*.
+    ONE implementation. This logic used to exist twice — here for polling and
+    again in tools/effects.handle_request_consent for opening — with the
+    sequence indexing, the timeout threshold and the approval check copied
+    between them. Two copies of a rule is the same defect as two tables
+    describing one namespace; they only have to drift once.
     """
     facts = state.facts
-    if facts.consent_status != ConsentStatus.PENDING:
-        return
     scenario = domain.consent_scenarios.get(
         state.consent_scenario, domain.consent_scenarios.get("default", {})
     )
@@ -228,6 +219,34 @@ def poll_pending_consent(state: SessionState, domain: DomainContext) -> None:
         facts.consent_status = ConsentStatus.APPROVED
     elif facts.consent_poll_count >= len(sequence):
         facts.consent_status = ConsentStatus.TIMED_OUT
+    else:
+        facts.consent_status = ConsentStatus.PENDING
+
+
+def open_consent_request(state: SessionState, domain: DomainContext) -> bool:
+    """Open an authorisation request. Returns False if one is already open."""
+    if state.facts.consent_status not in (ConsentStatus.NOT_REQUESTED, ConsentStatus.DECLINED):
+        return False
+    _advance_consent(state, domain)
+    return True
+
+
+def poll_pending_consent(state: SessionState, domain: DomainContext) -> None:
+    """Advance a pending consent request by one step (DESIGN.md §7.10).
+
+    Called from two places: `transition()`, so a caller turn never observes
+    stale consent, and the API's wall-clock poll endpoint, so a caller who
+    says nothing at all still sees it resolve.
+
+    Why this is NOT the model's job: a real asynchronous approval doesn't
+    wait for an agent to decide it's time to check — it resolves on its own
+    schedule and the agent observes the result. Leaving the polling cadence
+    to the model made a real behaviour (does consent eventually arrive?)
+    depend on a stylistic choice, which showed up as eval flakiness.
+    """
+    if state.facts.consent_status != ConsentStatus.PENDING:
+        return
+    _advance_consent(state, domain)
 
 
 def _try_narrow_intent_candidate(state: SessionState, domain: DomainContext) -> None:
@@ -320,8 +339,31 @@ def _post_process_phase_transition(state: SessionState, signals: TurnSignals) ->
             facts.email_skipped = True
 
     if facts.wrap_up_signalled and (facts.email_sent or facts.email_skipped):
-        return Phase.CLOSED
+        # The ordinary, happy-path ending — and until the end-reason registry
+        # existed it was the ONE ending with no reason recorded. Every failure
+        # path had a reason; a call that simply went well did not, which is
+        # backwards. `caller_finished` is now written like any other.
+        return end_session(state, "caller_finished", signals.turn_index)
     return Phase.POST_PROCESS
+
+
+def end_session(state: SessionState, reason: str, turn_index: int) -> Phase:
+    """The ONE way a session ends.
+
+    Sets the single authored fact and returns the phase it projects to. Call
+    sites used to set `escalation_reason` and separately choose a phase —
+    two facts that had to agree, and in one case did not: off-topic
+    persistence set ABUSE_TERMINATED while the disposition table labelled it
+    a transfer, a code that could therefore never fire. Reading the phase out
+    of the reason makes that disagreement unrepresentable.
+
+    KeyError on an unknown reason, deliberately: a reason that is not in the
+    registry has no phase, no disposition and no handoff guidance, and
+    failing at the call site beats defaulting quietly.
+    """
+    spec = END_REASONS[reason]
+    state.facts.ended = EndState(reason=reason, at_turn=turn_index)
+    return spec.phase
 
 
 def settle_phase(state: SessionState) -> None:
@@ -343,7 +385,7 @@ def settle_phase(state: SessionState) -> None:
     if state.phase != Phase.POST_PROCESS:
         return
     if facts.wrap_up_signalled and (facts.email_sent or facts.email_skipped):
-        state.phase = Phase.CLOSED
+        state.phase = end_session(state, "caller_finished", len(state.transcript))
 
 
 def transition(state: SessionState, signals: TurnSignals, domain: DomainContext, spec: SopSpec) -> SessionState:
@@ -361,6 +403,20 @@ def transition(state: SessionState, signals: TurnSignals, domain: DomainContext,
     if signals.wrap_up_request:
         new_state.facts.wrap_up_signalled = True
 
+    # An explicit "please ask my mother for authorisation" is an INSTRUCTION,
+    # not a judgement call, and it is handled here for the same reason an
+    # explicit request for a human is: the caller should not need the model
+    # to agree with them. Leaving it to the model's initiative meant a caller
+    # who asked on turn N sometimes got the request opened on turn N+1 —
+    # which read as the agent ignoring them, and made the consent scenario
+    # flaky for a reason that had nothing to do with consent.
+    if (
+        signals.requests_consent
+        and new_state.facts.caller_role == CallerRole.REPRESENTATIVE
+        and new_state.phase not in TERMINAL_PHASES
+    ):
+        open_consent_request(new_state, domain)
+
     phase = new_state.phase
     facts = new_state.facts
 
@@ -370,23 +426,19 @@ def transition(state: SessionState, signals: TurnSignals, domain: DomainContext,
 
     # --- centralized precedence, mirrors DESIGN.md §7.4's directive order ---
     if signals.escalation_request:
-        facts.escalation_reason = "caller_requested_human"
-        new_state.phase = Phase.HUMAN_HANDOFF
+        new_state.phase = end_session(new_state, "caller_requested_human", signals.turn_index)
         return new_state
 
     if facts.verification_status == VerificationStatus.LOCKED:
-        facts.escalation_reason = "identity_verification_failed"
-        new_state.phase = Phase.HUMAN_HANDOFF
+        new_state.phase = end_session(new_state, "identity_verification_failed", signals.turn_index)
         return new_state
 
     if facts.injection_flags >= spec.escalation.max_injection_flags:
-        facts.escalation_reason = "repeated_prompt_injection_attempts"
-        new_state.phase = Phase.HUMAN_HANDOFF
+        new_state.phase = end_session(new_state, "repeated_prompt_injection_attempts", signals.turn_index)
         return new_state
 
     if facts.off_topic_strikes > spec.escalation.max_off_topic_strikes:
-        facts.escalation_reason = "repeated_off_topic_requests"
-        new_state.phase = Phase.ABUSE_TERMINATED
+        new_state.phase = end_session(new_state, "repeated_off_topic_requests", signals.turn_index)
         return new_state
 
     if signals.scope == ScopeRing.OUT:

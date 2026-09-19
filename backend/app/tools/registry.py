@@ -61,38 +61,29 @@ TOOL_SCHEMAS: dict[str, dict] = {
 RECORD_SIGNALS_SCHEMA = {
     "name": "record_signals",
     "description": (
-        "Record information relevant to LATER steps of this call, or emotional/behavioral signals from "
-        "THIS message. Call this alongside your reply whenever any of these fields apply; omit fields "
-        "that don't. This is bookkeeping — it is never shown to the caller."
+        "Record one short note on why you replied the way you did. Bookkeeping for the audit "
+        "trail — never shown to the caller."
     ),
     "input_schema": {
         "type": "object",
         "properties": {
-            "case_type": {"type": "string", "description": "e.g. healthcare, auto, dental — only if mentioned."},
-            "case_status_hint": {"type": "string", "description": "e.g. denied, open, closed — only if mentioned."},
-            "case_time_ref": {"type": "string", "description": "A month name if the caller referenced one, e.g. 'January'."},
-            "intent": {
-                "type": "string",
-                "enum": [
-                    "document_submission", "next_steps", "denial_question", "general_claim_question",
-                    "status_inquiry", "appeal_request", "payment_question", "escalation_request", "social",
-                ],
-            },
-            "intent_confidence": {"type": "number"},
-            "intent_evidence_quote": {"type": "string", "description": "The exact phrase that supports the intent."},
-            "negative_affect": {"type": "boolean"},
-            "refusal": {"type": "boolean", "description": "Caller is refusing to comply with a request (e.g. won't give ID info)."},
-            "confusion": {"type": "boolean"},
-            "intensity": {"type": "integer", "minimum": 0, "maximum": 3},
-            "contact_change_requested": {"type": "boolean", "description": "Caller asked to change phone/email on file."},
-            "contact_change_detail": {"type": "string"},
             "internal_note": {
                 "type": "string",
-                "description": "One short sentence on why you replied the way you did — for audit/debugging, never shown to the caller.",
+                "description": "One short sentence on why you replied the way you did.",
             },
         },
     },
 }
+# This schema used to carry every perception of the caller's message —
+# case hints, intent, affect, intensity, contact-change requests. All of that
+# now happens in the blocking PERCEIVE call (app/llm/extraction.py), because
+# those are readings of the CALLER'S message and belong in the call that
+# reads it. Having them here meant they described the previous turn by the
+# time any decision could use them, and it made ACT's token budget carry a
+# second JSON payload alongside the reply.
+#
+# What is left is the one thing only ACT can know: why the model chose the
+# reply it chose. That genuinely cannot be perceived in advance.
 
 
 def tools_for_names(names: tuple[str, ...]) -> list[dict]:

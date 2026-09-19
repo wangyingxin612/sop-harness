@@ -20,7 +20,7 @@ class TestTransferToHuman:
         state = make_state(phase=Phase.PROCESS_CASE)
         handle_transfer_to_human(state, {"reason": "caller upset"}, "tool_1")
         assert state.phase == Phase.HUMAN_HANDOFF
-        assert state.facts.escalation_reason == "agent_initiated_transfer"
+        assert (state.facts.ended.reason if state.facts.ended else None) == "agent_initiated_transfer"
 
 
 class TestCreateFollowup:

@@ -15,6 +15,9 @@ from pathlib import Path
 
 from app.sop.domain import DomainContext
 from app.sop.summary import build_summary_draft
+from types import SimpleNamespace
+
+from app.sop.machine import end_session, open_consent_request
 from app.sop.types import ConsentStatus, Phase, SessionState
 
 
@@ -34,7 +37,7 @@ def handle_transfer_to_human(state: SessionState, tool_input: dict, tool_use_id:
     reason = tool_input.get("reason", "caller requested or agent-initiated transfer")
     if state.phase not in (Phase.HUMAN_HANDOFF,):
         state.phase = Phase.HUMAN_HANDOFF
-        state.facts.escalation_reason = "agent_initiated_transfer"
+        end_session(state, "agent_initiated_transfer", state.facts.turns_used)
     return ToolEffectResult(
         tool_name="transfer_to_human",
         tool_use_id=tool_use_id,
@@ -72,21 +75,11 @@ def handle_request_consent(
     come through?" should get.
     """
     facts = state.facts
-    scenario = consent_scenarios.get(state.consent_scenario, consent_scenarios["default"])
-    sequence = scenario["status_sequence"]
-
-    if facts.consent_status in (ConsentStatus.NOT_REQUESTED, ConsentStatus.DECLINED):
-        facts.consent_poll_count += 1
-        idx = min(facts.consent_poll_count - 1, len(sequence) - 1)
-        if sequence[idx] == "approved":
-            facts.consent_status = ConsentStatus.APPROVED
-        elif facts.consent_poll_count >= len(sequence):
-            facts.consent_status = ConsentStatus.TIMED_OUT
-        else:
-            facts.consent_status = ConsentStatus.PENDING
-        action = "opened"
-    else:
-        action = "already open"
+    # The sequence logic lives in machine._advance_consent — one
+    # implementation, shared with polling. A shim is needed only because this
+    # handler receives raw scenarios rather than a DomainContext.
+    shim = SimpleNamespace(consent_scenarios=consent_scenarios)
+    action = "opened" if open_consent_request(state, shim) else "already open"
 
     return ToolEffectResult(
         tool_name="request_consent",

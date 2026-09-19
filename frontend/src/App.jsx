@@ -70,10 +70,6 @@ export default function App() {
     setNotice("This call was closed after a long silence. The transcript and audit trail are complete.");
   }, [sessionId]);
 
-  // What the caller is currently looking at — the reply whose reading time
-  // the idle budget has to cover.
-  const lastAgentText = [...messages].reverse().find((m) => m.role === "agent")?.text ?? "";
-
   const handleIdleEvent = useCallback(
     (event, payload) => reportEvent(sessionId, event, payload),
     [sessionId]
@@ -87,7 +83,6 @@ export default function App() {
   } = useIdleLadder({
     active: !!sessionId && !busy && !terminal,
     idlePolicy: state?.idle_policy,
-    lastAgentText,
     onExpire: handleIdleExpire,
     onEvent: handleIdleEvent,
   });

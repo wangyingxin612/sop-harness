@@ -117,6 +117,66 @@ multi-tenant operations, and model training. §9 states which of these are defer
 
 ---
 
+## 1.7 What "excellent" means for an SOP-guided agent
+
+Worth stating before the design, because it is the standard the rest of the document is trying to
+meet. Five properties, in the order they bite:
+
+**1. The guarantees do not depend on the model being good.** If swapping the model can break a
+compliance property, there is no harness — there is a prompt that has been working. This is the claim
+§8.7 exists to falsify, and every other property is downstream of it.
+
+**2. Every rule is enforced by a mechanism you can name.** For each requirement, one of four things is
+true: the data is absent, the tool is absent, code decided, or a guard blocked it. "The model was told
+to" is not on the list. Where nothing but instruction backs a rule, it is labelled `advisory` and
+counted (§7.4), because the share of an SOP that is hope rather than mechanism is a number a team
+should be able to see.
+
+**3. Nothing is enforced twice, and nothing is enforced nowhere.** Every namespace that two components
+share is closed, and a value outside it fails loudly. This sounds like housekeeping; it is the single
+most productive source of real defects in this build. Eleven of twenty contract elements were silently
+unchecked, a directive never fired for the entire project, and a disposition code could never be
+reached — all three were two hand-maintained tables and a `.get()` that returned `None`.
+
+**4. Freedom is the default inside the envelope.** The agent is not a script. Compliance bought by
+templating every reply fails the other half of the brief — so the measure is not "did it obey" but
+"did it obey *while still sounding like a person*", which is why guard fallback rate is reported beside
+pass rate. A harness that hits 100% compliance at a 65% fallback rate has not succeeded; it has
+stopped conversing.
+
+**5. Every conversation ends, with a recorded reason.** This is the one I underrated, and you were
+right to press on it.
+
+### Why termination is a first-class concern
+
+An SOP is usually drawn as a pipeline toward a goal — verify, resolve, process, summarise — and
+"finished" is treated as whatever happens after the last box. That framing produces a specific,
+predictable family of bugs, and this project found most of them: the summary re-offered after it was
+sent; the phase never settling so a completed call sat open; a close reason defaulting to
+"abandoned" so successful calls were logged as walkaways; a caller closing the browser leaving the
+session live forever; and the ordinary happy-path ending being the *only* ending with no reason
+recorded at all — every failure path had one.
+
+Those look like five unrelated bugs. They are one missing concept.
+
+A conversation is not a pipeline, it is a **session with a lifecycle**, and the interesting states are
+at the end: the caller got what they came for, or gave up, or was handed to a human, or was cut off, or
+simply vanished. Those are different outcomes with different owners, different follow-up, and different
+places in a containment statistic. An agent that cannot distinguish them cannot be operated — not
+because the conversation was bad, but because nobody can tell afterwards what happened.
+
+So termination is modelled the same way authorization is: one authored fact (`ended = {reason,
+at_turn}`), with the phase, the disposition, the routing queue and the closing copy all *derived* from
+it. A reason outside the registry raises at the call site. That is what makes "which of these two
+disagrees?" an unaskable question.
+
+It also has a product consequence worth naming: **an agent that cannot end a call cannot be trusted to
+run one unattended.** Containment, average handle time and abandonment are all measured from the
+ending, so a harness that is vague about endings produces numbers a buyer cannot act on, however good
+its conversations are.
+
+---
+
 ## 2. The core design question
 
 The brief's decisive clause is that **different steps need different levels of freedom**. That single
@@ -618,6 +678,31 @@ etc. up front.
 
 This removes a class of hallucination instead of detecting it, and it is why the grounding check can stay
 strict enough to be worth having.
+
+**What a directive is, and what it is not.** A `Directive` is text injected into the system prompt.
+That is all it is. Emitting one *asks* for something; it does not make it happen. The mechanism exists
+to keep instruction text out of the generation code and make it inspectable and per-SOP configurable,
+and it is good at that — the Inspector shows exactly which instructions were in force on a turn.
+
+The trap is letting it *feel* like enforcement. A directive has an ID, a registry entry, a line in the
+trace and a chip in the UI, so adding one reads like adding a control. Three defects in this build came
+from that and they are all one defect: `SEND_NOW` never fired for the entire project (the model sent
+the email anyway), `ACKNOWLEDGE_EMOTION` never fired (the model was polite anyway), and scope had no
+output-side directive at all (the model stayed on topic anyway). In each case the model was silently
+doing the control plane's job, and nothing noticed because the outcome looked right.
+
+So every directive declares the mechanism that actually backs it:
+
+| Backing | Meaning | Count |
+|---|---|---|
+| `structural` | The data or tool is absent; the model cannot do otherwise | 5 |
+| `deterministic` | Code decides; the directive supplies the words | 12 |
+| `guard` | An output rule blocks the reply if it is ignored | 6 |
+| `advisory` | **Nothing enforces this.** Tone only | 4 |
+
+`advisory` is the honest category and the one worth watching: it is the share of the SOP that is hope
+rather than mechanism. `evals/architecture.py` fails if any directive has no declared backing, so the
+ratio cannot drift unseen.
 
 ### 7.5 ACT — generation inside the envelope
 
@@ -1418,6 +1503,29 @@ Design review removed six things we had designed ourselves. Recorded because the
   off-topic branch. `bank_kyc.yaml` can be selected too (proves the config layer is generic — see §9.2's
   honestly-scoped note); the UI says plainly that case resolution still reads insurance fixture data
   past identity verification, since no bank domain adapter exists yet.
+
+---
+
+## 10.5 One namespace, one home
+
+Every namespace-drift defect found in this build had the same shape: two hand-maintained tables
+describing one concept, with a silent `.get()` between them.
+
+| Two tables | What silently stopped working |
+|---|---|
+| `policy.py` element strings ↔ guard matchers | **11 of 20** contract elements were never checked, including R8's send-to-file-address-only rule |
+| `escalation_reason` ↔ disposition codes ↔ handoff guidance | A disposition code that could never be reached; off-topic persistence counted as a transfer when it terminates |
+| directive emitted ↔ behaviour enforced | `SEND_NOW` never fired for the whole project |
+| client event names ↔ metrics sink | A renamed event reads as zero forever, indistinguishable from "never happens" |
+
+The cure is not more care, because care is exactly what fails silently. It is making absence impossible
+to express: a closed vocabulary, one authored representation, everything else derived, and a loud
+failure for anything outside it. `end_session()` raises on an unknown reason. `check_contract()` reports
+an unrecognised element instead of skipping it. `evals/architecture.py` re-checks all of it in
+milliseconds, with no model and no API key, on every commit.
+
+The tell that this was needed: we had written a *consistency test between two internal
+representations*. Needing one is the smell — the duplication is the bug.
 
 ---
 

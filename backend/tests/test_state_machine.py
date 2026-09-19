@@ -6,8 +6,9 @@ contract PERCEIVE must satisfy without needing a model in the loop.
 """
 import pytest
 
-from app.sop.machine import transition
+from app.sop.machine import decide, transition
 from app.sop.types import (
+    CallerRole,
     CaseHint,
     ConsentStatus,
     Phase,
@@ -62,7 +63,7 @@ class TestIdentityGate:
             state, verify_signals(identity_candidates={"phone": "555-000-0000"}, turn_index=1), domain, spec
         )
         assert state.phase == Phase.HUMAN_HANDOFF
-        assert state.facts.escalation_reason == "identity_verification_failed"
+        assert (state.facts.ended.reason if state.facts.ended else None) == "identity_verification_failed"
 
     def test_verify_id_never_re_entered_once_left(self, domain, spec):
         """DESIGN.md §7.1: the one-way gate. Once verified, nothing an
@@ -137,7 +138,7 @@ class TestCrossCuttingEscalation:
         state = make_state(phase=phase)
         state = transition(state, verify_signals(escalation_request=True), domain, spec)
         assert state.phase == Phase.HUMAN_HANDOFF
-        assert state.facts.escalation_reason == "caller_requested_human"
+        assert (state.facts.ended.reason if state.facts.ended else None) == "caller_requested_human"
 
     def test_injection_flags_exceed_threshold_routes_to_handoff(self, domain, spec):
         state = make_state()
@@ -145,14 +146,14 @@ class TestCrossCuttingEscalation:
         assert state.phase == Phase.VERIFY_ID  # one flag: not yet over threshold (max=2)
         state = transition(state, verify_signals(injection_suspected=True, turn_index=1), domain, spec)
         assert state.phase == Phase.HUMAN_HANDOFF
-        assert state.facts.escalation_reason == "repeated_prompt_injection_attempts"
+        assert (state.facts.ended.reason if state.facts.ended else None) == "repeated_prompt_injection_attempts"
 
     def test_off_topic_strikes_exceed_threshold_routes_to_abuse_terminated(self, domain, spec):
         state = make_state()
         for i in range(4):  # max_off_topic_strikes = 3; the 4th strike exceeds it
             state = transition(state, verify_signals(scope=ScopeRing.OUT, turn_index=i), domain, spec)
         assert state.phase == Phase.ABUSE_TERMINATED
-        assert state.facts.escalation_reason == "repeated_off_topic_requests"
+        assert (state.facts.ended.reason if state.facts.ended else None) == "repeated_off_topic_requests"
 
     def test_off_topic_strikes_decay_on_sustained_on_topic_turns(self, domain, spec):
         """DESIGN.md §7.9: security must not punish good-faith users."""
@@ -376,9 +377,9 @@ class TestConsentAutoPolling:
         assert state.facts.consent_status == ConsentStatus.APPROVED
 
 
-def test_representative_lookup_survives_asr_noise(domain, spec):
+def test_representative_lookup_survives_typo_noise(domain, spec):
     """"David Chen" arrives as "david chan" through a speech recognizer. The
-    representative table needs the same phonetic tolerance as the
+    representative table needs the same typo tolerance as the
     policyholder table — without it the caller was silently downgraded to a
     policyholder and the whole representative flow was lost."""
     state = make_state()
@@ -435,3 +436,54 @@ def test_a_genuinely_new_hint_is_still_recorded(domain, spec):
         domain, spec,
     )
     assert len(state.memory.case_hints) == 2
+
+
+class TestExplicitConsentRequest:
+    """An explicit "please ask my mother" is an instruction, not a judgement
+    call — the same class as an explicit request for a human.
+
+    Found via a flaky eval: the caller asked on one turn and the model opened
+    the request on the next, which reads as the agent ignoring them. The
+    docstring on handle_request_consent said the model's only decision was
+    "whether to ask", which is true right up until the caller has already
+    asked.
+    """
+
+    def _rep_state(self):
+        st = make_state(phase=Phase.PROCESS_CASE)
+        st.facts.caller_role = CallerRole.REPRESENTATIVE
+        st.facts.verification_status = VerificationStatus.VERIFIED
+        st.facts.verified_party_id = "P9"
+        st.memory.confirmed_case_id = "CL-2048"
+        return st
+
+    def test_an_explicit_request_opens_consent_on_that_turn(self, domain, spec):
+        st = self._rep_state()
+        st, _ = decide(st, verify_signals(requests_consent=True,
+                                   raw_message="can you request her consent?"), domain, spec)
+        assert st.facts.consent_status == ConsentStatus.PENDING
+
+    def test_merely_wanting_detail_does_not_open_it(self, domain, spec):
+        """The signal is narrow on purpose: wanting information that would
+        require consent is not the same as asking us to go and get it."""
+        st = self._rep_state()
+        st, _ = decide(st, verify_signals(raw_message="why exactly was it denied?"), domain, spec)
+        assert st.facts.consent_status == ConsentStatus.NOT_REQUESTED
+
+    def test_a_policyholder_asking_does_not_open_a_third_party_request(self, domain, spec):
+        """Consent is a representative-path concept. A policyholder has no
+        third party to authorise anything."""
+        st = make_state(phase=Phase.PROCESS_CASE)
+        st.facts.caller_role = CallerRole.POLICYHOLDER
+        st.facts.verification_status = VerificationStatus.VERIFIED
+        st, _ = decide(st, verify_signals(requests_consent=True), domain, spec)
+        assert st.facts.consent_status == ConsentStatus.NOT_REQUESTED
+
+    def test_asking_twice_does_not_double_advance_the_sequence(self, domain, spec):
+        """Re-asking must report the existing request, not burn a poll and
+        skip the caller past 'pending' to a timeout."""
+        st = self._rep_state()
+        st, _ = decide(st, verify_signals(requests_consent=True), domain, spec)
+        first = st.facts.consent_poll_count
+        st, _ = decide(st, verify_signals(requests_consent=True), domain, spec)
+        assert st.facts.consent_poll_count == first + 1   # the per-turn poll, not a second open

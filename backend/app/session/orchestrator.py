@@ -45,33 +45,6 @@ def _safe_template_for(plan) -> str:
     return "Let me get you connected with someone who can help further."
 
 
-def _fold_memory_updates(state: SessionState, memory_updates, turn_index: int) -> None:
-    """Deferred perception (DESIGN.md §7.3/§7.11): folds ACT's memory_updates
-    into state for the NEXT turn's transition() to see. Mirrors the
-    unconditional-extraction handling in machine._record_deferred_signals,
-    but for signals that arrived via ACT instead of blocking PERCEIVE."""
-    memory = state.memory
-    if memory_updates.case_hint is not None:
-        memory.case_hints.append(memory_updates.case_hint)
-    if memory_updates.intent and memory_updates.intent_confidence >= 0.55:
-        memory.resolved_intent = memory_updates.intent
-        memory.intent_evidence_quote = memory_updates.intent_evidence_quote
-        memory.intent_confidence = memory_updates.intent_confidence
-    if memory_updates.contact_change_request is not None:
-        memory.contact_change_requests.append({**memory_updates.contact_change_request, "turn_index": turn_index})
-
-    facts = state.facts
-    if memory_updates.refusal:
-        facts.refusal_count += 1
-    deterministic_floor = 0
-    if facts.refusal_count >= 2:
-        deterministic_floor = 2
-    elif facts.refusal_count >= 1:
-        deterministic_floor = 1
-    facts.last_intensity = max(memory_updates.intensity, deterministic_floor, facts.last_intensity)
-    facts.peak_intensity = max(facts.peak_intensity, facts.last_intensity)
-
-
 def run_turn(
     state: SessionState,
     user_message: str,
@@ -147,8 +120,10 @@ def run_turn(
     # when transition() ran (sending the summary is the case that matters).
     settle_phase(new_state)
 
-    # deferred perception -> memory, for the NEXT turn
-    _fold_memory_updates(new_state, act_output.memory_updates, turn_index)
+    # No deferred-perception fold any more: every reading of the caller's
+    # message arrives through blocking PERCEIVE and is folded once, inside
+    # transition(). ACT's only memory contribution is its internal note,
+    # which goes to the trace below.
 
     # transcript + trace
     new_state.transcript.append(Turn(turn_index=turn_index, role="caller", text=user_message))
@@ -179,8 +154,8 @@ def run_turn(
             {"tool": e.tool_name, "summary": e.summary_for_trace} for e in tool_effects
         ],
         "memory_updates": {
-            "case_hint": _hint_for_trace(act_output.memory_updates.case_hint),
-            "intent": act_output.memory_updates.intent,
+            "case_hint": _hint_for_trace(signals.case_hint),
+            "intent": signals.intent,
             "internal_note": act_output.memory_updates.internal_note,
         },
         "latency_s": {

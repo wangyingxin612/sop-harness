@@ -15,15 +15,10 @@ from app.sop.types import CaseHint, SessionState, TurnPlan
 
 @dataclass
 class MemoryUpdates:
-    case_hint: CaseHint | None = None
-    intent: str | None = None
-    intent_confidence: float = 0.0
-    intent_evidence_quote: str = ""
-    negative_affect: bool = False
-    refusal: bool = False
-    confusion: bool = False
-    intensity: int = 0
-    contact_change_request: dict | None = None
+    """What ACT contributes to memory. Only the model's own rationale — every
+    perception of the caller's message is now read by the blocking PERCEIVE
+    call instead (see app/tools/registry.py)."""
+
     internal_note: str = ""
 
 
@@ -40,31 +35,8 @@ class ActOutput:
     truncated: bool = False   # stop_reason == "max_tokens" — treat as a guard failure, not just short text
 
 
-def _parse_record_signals(tool_input: dict, turn_index: int, raw_message: str) -> MemoryUpdates:
-    case_hint = None
-    if any(tool_input.get(k) for k in ("case_type", "case_status_hint", "case_time_ref")):
-        case_hint = CaseHint(
-            case_type=tool_input.get("case_type"),
-            status=tool_input.get("case_status_hint"),
-            time_ref=tool_input.get("case_time_ref"),
-            verbatim_quote=raw_message,
-            turn_index=turn_index,
-        )
-    contact_change = None
-    if tool_input.get("contact_change_requested"):
-        contact_change = {"detail": tool_input.get("contact_change_detail", "")}
-    return MemoryUpdates(
-        case_hint=case_hint,
-        intent=tool_input.get("intent"),
-        intent_confidence=float(tool_input.get("intent_confidence", 0.0) or 0.0),
-        intent_evidence_quote=tool_input.get("intent_evidence_quote", ""),
-        negative_affect=bool(tool_input.get("negative_affect", False)),
-        refusal=bool(tool_input.get("refusal", False)),
-        confusion=bool(tool_input.get("confusion", False)),
-        intensity=int(tool_input.get("intensity", 0) or 0),
-        contact_change_request=contact_change,
-        internal_note=tool_input.get("internal_note", ""),
-    )
+def _parse_record_signals(tool_input: dict, turn_index: int, raw_message: str) -> MemoryUpdates:  # noqa: ARG001
+    return MemoryUpdates(internal_note=tool_input.get("internal_note", "") or "")
 
 
 def _tool_ack(tool_name: str, state: SessionState) -> str:

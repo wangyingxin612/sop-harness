@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from app.sop.machine import end_session
 from app.sop.types import Phase, SessionState
 
 TERMINAL = (Phase.CLOSED, Phase.HUMAN_HANDOFF, Phase.ABUSE_TERMINATED)
@@ -78,14 +79,12 @@ def sweep(store, get_spec, now: datetime | None = None) -> list[str]:
         idle = idle_seconds(state, now)
         if idle is None or idle < ceiling:
             continue
-        state.phase = Phase.CLOSED
         # The browser may have told us the window went away before the
-        # silence started. That evidence is recorded on the session, and it
-        # is what separates "walked away mid-conversation" from "closed the
-        # tab and left" — two different product problems.
-        state.facts.escalation_reason = (
-            "caller_window_closed" if state.facts.window_closed else "caller_inactive"
-        )
+        # silence started. That evidence separates "walked away
+        # mid-conversation" from "closed the tab and left" — two different
+        # product problems.
+        reason = "caller_window_closed" if state.facts.window_closed else "caller_inactive"
+        state.phase = end_session(state, reason, len(state.transcript))
         store.update(state)
         closed.append(sid)
     return closed

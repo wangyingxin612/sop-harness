@@ -30,7 +30,7 @@ from app.identity.normalize import (
     normalize_name,
     normalize_phone,
 )
-from app.identity.phonetic import names_sound_alike
+from app.identity.fuzzy import names_match_loosely
 from app.identity.records import PolicyholderRecord
 
 IDENTITY_FACTOR_TYPES = ("full_name", "dob", "phone", "email", "id_last4")
@@ -48,10 +48,10 @@ class FactorOutcome(str, Enum):
 class MatchTier(str, Enum):
     """How a factor matched. Recorded rather than flattened, so the audit
     trail and the inspector can show honestly that a name matched by sound
-    rather than exactly (DESIGN.md §7.2, app/identity/phonetic.py)."""
+    rather than exactly (DESIGN.md §7.2, app/identity/fuzzy.py)."""
 
     EXACT = "exact"
-    PHONETIC = "phonetic"
+    FUZZY = "fuzzy"
 
 
 _NORMALIZERS = {
@@ -86,7 +86,7 @@ def records_matching_factor(
     Exact matching is tried first and always wins. Phonetic fallback applies
     to `full_name` ONLY — never to DOB, phone, email or the ID last-four,
     which stay exact because they are the high-entropy factors. See
-    app/identity/phonetic.py for why loosening the name specifically is safe
+    app/identity/fuzzy.py for why loosening the name specifically is safe
     (short version: a name was never the secret, and verification still
     requires two other exact factors)."""
     normalize = _NORMALIZERS[factor_type]
@@ -98,11 +98,11 @@ def records_matching_factor(
     if exact or factor_type != "full_name":
         return exact, MatchTier.EXACT
 
-    phonetic = [
+    fuzzy_hits = [
         r for r in records
-        if any(names_sound_alike(normalized, candidate) for candidate in _record_values(r, "full_name"))
+        if any(names_match_loosely(normalized, candidate) for candidate in _record_values(r, "full_name"))
     ]
-    return phonetic, MatchTier.PHONETIC
+    return fuzzy_hits, MatchTier.FUZZY
 
 
 @dataclass
@@ -227,11 +227,11 @@ def apply_factors(
     return state
 
 
-def phonetic_match_used(state: "MatchState") -> bool:
+def fuzzy_match_used(state: "MatchState") -> bool:
     """Whether any accepted factor matched by sound. Surfaced in the audit
     trail and the handoff packet so a reviewer never has to guess."""
     return any(
-        h.outcome == FactorOutcome.MATCHED and h.tier == MatchTier.PHONETIC for h in state.history
+        h.outcome == FactorOutcome.MATCHED and h.tier == MatchTier.FUZZY for h in state.history
     )
 
 
