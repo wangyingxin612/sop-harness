@@ -20,9 +20,9 @@ documented in §4.
 | | Layer | Tests | Model calls | Cost | Speed |
 |---|---|---|---|---|---|
 | 1 | `backend/tests/` | The deterministic core: state machine, matcher, policy resolver, output guard | **none** | $0 | 302 tests, ~5s |
-| 2 | `evals/runner.py` | The whole system on scripted conversations, real model | real API | ~$0.65 | 15 scenarios, ~6 min |
+| 2 | `evals/runner.py` | The whole system on scripted conversations, real model | real API | ~$0.72 | 16 scenarios, ~6 min |
 | 3 | `evals/attribution.py` | **Which mechanism** caused each requirement to be met | none (reads layer 2) | $0 | instant |
-| 4 | `evals/independence.py` | Whether guarantees survive a hostile model | **none** | $0 | 15 scenarios, ~10s |
+| 4 | `evals/independence.py` | Whether guarantees survive a hostile model | **none** | $0 | 16 scenarios, ~10s |
 | 5 | `evals/simulator.py` | Improvised conversations from personas with goals | real API | ~$0.05/call | unbounded |
 | 0 | `evals/architecture.py` | Whether two components that must agree still do | **none** | $0 | 5 claims, ~50ms |
 
@@ -108,7 +108,7 @@ the entire build.** A comparison against `next_turn_index() - 1`, when `resolve(
 caller's turn is appended, made its condition permanently false.
 
 The summary email went out every time anyway, because the model saw `pending_action` in `visible_facts`
-and volunteered the tool call. **12/12 scenarios green. 8 invariants holding. The control plane doing
+and volunteered the tool call. **Every scenario green. Nine invariants holding. The control plane doing
 nothing.**
 
 That is precisely the failure this architecture exists to prevent, and no amount of additional scripted
@@ -128,7 +128,7 @@ containment_rate      0.733     guard repair 0.000     guard fallback 0.000
 architecture    5/5 static claims coherent (closed vocabularies still closed)
 attribution     9/9 claims enforced, 0 unguarded passes, 0 violations   -> trustworthy
 enforcement mix 3 structural, 4 deterministic, 2 behavioural
-coverage        phases 7/7 (100%),  directives 21/22 (95%)
+coverage        phases 7/7 (100%),  directives 22/23 (96%)
 
 simulated       6/6 conversations invariant-clean, 8.7 turns avg, 0 guard fallbacks
 hostile         0 safety violations, 0.98 fallback rate, 52 replies, no poison delivered
@@ -312,7 +312,7 @@ lit up.
 
 ## 10. Honest limitations
 
-- **Small N.** 15 scenarios finds real bugs and demonstrates the method. It does not produce a
+- **Small N.** 16 scenarios finds real bugs and demonstrates the method. It does not produce a
   statistically confident containment estimate for a launch decision.
 - **The hostile model is a fixed rotation, not an adaptive adversary.** It does not search for the
   weakest rule; a real red-team would. It establishes that the floor holds against a known set of

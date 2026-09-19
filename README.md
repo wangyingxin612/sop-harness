@@ -7,7 +7,9 @@ naturally, strict where the SOP demands it and flexible where reasoning helps.
 **Read [DESIGN.md](DESIGN.md) for the full design rationale** — the problem framing, alternatives
 considered, the architecture, and every non-obvious decision with its reasoning. This file is the
 practical "how to run it" companion. **[EVAL.md](EVAL.md)** covers testing methodology and results.
-**[PROGRESS.md](PROGRESS.md)** is a running build log, including bugs found via live testing and how
+**[PROGRESS.md](PROGRESS.md)** is the build log — decisions, bugs and root causes, in the order they
+happened. Earlier entries cite figures the project has since moved past; DESIGN.md and EVAL.md are
+authoritative for the current state. Included because the most useful bugs here
 they were fixed — useful if you want to see the actual engineering process, not just the end state.
 
 ## What this is, in one paragraph
@@ -15,7 +17,7 @@ they were fixed — useful if you want to see the actual engineering process, no
 The engine (`backend/app/sop/`) is a generic SOP runtime: phases, gates, tool permissions, and disclosure
 scopes are read from a YAML spec (`backend/sops/insurance_claims.yaml`), not hard-coded. Authority over
 *what may happen* lives entirely in deterministic, LLM-free Python (state machine, identity matcher,
-policy resolver, output guard — 134 unit tests, zero model calls); the model only decides *what to say*,
+policy resolver, output guard — 302 unit tests, zero model calls); the model only decides *what to say*,
 inside whatever envelope that code hands it each turn. A FastAPI backend and a React chat+Inspector
 frontend sit on top, so you can watch the SOP enforce itself turn by turn.
 
@@ -103,7 +105,8 @@ The eval run writes `backend/evals/reports/latest.json` and is rendered as a rea
 **/api/evals/report** (also linked from the Operations tab).
 
 See [EVAL.md](EVAL.md) for what each layer checks and the current baseline results
-(`backend/evals/reports/baseline.json`).
+(`backend/evals/reports/latest.json`, plus the derived `attribution.json`, `coverage.json` and
+`architecture.json` written by the same run).
 
 ## Deploying to Fly.io
 
@@ -158,7 +161,9 @@ backend/sops/       insurance_claims.yaml — the SOP spec (DESIGN.md §6)
 backend/fixtures/   the provided starter data
 backend/tests/      302 pytest tests, no model calls
 backend/evals/      scenario harness against the real API — scenarios, invariants, runner,
-                    JSON + HTML reports, ASR-noise suite, model-routing cost experiment
+                    JSON + HTML reports, hostile-model + attribution + coverage +
+                    static-architecture checks, typo-noise suite, cost experiment,
+                    simulated callers
 frontend/           React chat + Inspector + Operations board (Vite)
 DESIGN.md   EVAL.md   PROGRESS.md
 ```

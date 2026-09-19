@@ -29,12 +29,22 @@ BACKEND = Path(__file__).resolve().parents[1]
 
 
 def _declared_directives() -> set[str]:
-    """Every directive the system can emit: the Directive() constants in
-    policy.py plus the directive_texts each SOP declares."""
-    ids = set(re.findall(r'^\s*id="([A-Z_]+)"', (BACKEND / "app/sop/policy.py").read_text(), re.M))
-    for f in (BACKEND / "sops").glob("*.yaml"):
-        ids |= set(yaml.safe_load(f.read_text()).get("directive_texts", {}))
-    return ids
+    """Every directive the system can emit.
+
+    Delegates to policy.all_directive_ids() rather than scanning for itself.
+    It did scan for itself, with a line-anchored regex, and missed
+    REFUSAL_TEMPLATE — which is built inline on one line — so this module
+    reported 22 directives while the policy module reported 23.
+
+    Two scans of one namespace, disagreeing by one, inside the very report
+    written to catch two descriptions of one namespace disagreeing. Worth
+    recording rather than quietly fixing: the pattern is genuinely easy to
+    reintroduce, and the only durable defence is that a namespace has exactly
+    one owner and everyone else asks it.
+    """
+    from app.sop.policy import all_directive_ids
+
+    return all_directive_ids()
 
 
 def _declared_phases() -> set[str]:

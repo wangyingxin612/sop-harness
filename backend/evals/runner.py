@@ -2,10 +2,17 @@
 orchestrator the product uses — this is deliberate: an eval harness that
 exercises a separate code path from production isn't testing production.
 
-Doubles as the `reset`/`step` shape DESIGN.md §8.4/§12 describes as an RL
-environment: `EnvSession.reset()` returns an initial observation, `step()`
-takes an action (a caller message) and returns the next observation plus a
-programmatic, verifiable reward computed from the same invariants used here.
+It is also the SHAPE an RL environment needs (DESIGN.md §8.4/§12): a session
+is reset per scenario, each caller message is an action, and the invariants
+plus attribution claims are a programmatic, verifiable reward computed from
+state rather than judged by a model.
+
+To be precise about what exists: there is no `EnvSession` class here. The
+reward function and the environment dynamics are real and are exercised on
+every run; the thin `reset()`/`step()` adapter over them is scoped in §9.2
+(P2) and not built. Saying so matters — a docstring that describes an
+interface as though it exists is the same defect as a directive that never
+fires.
 """
 from __future__ import annotations
 

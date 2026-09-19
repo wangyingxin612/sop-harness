@@ -6,9 +6,9 @@
     "unreached": []
   },
   "directives": {
-    "declared": 22,
-    "fired": 21,
-    "coverage": 0.955,
+    "declared": 23,
+    "fired": 22,
+    "coverage": 0.957,
     "never_fired": [
       "KYC_DISCLOSURE_LIMITS"
     ]

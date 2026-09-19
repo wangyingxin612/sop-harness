@@ -352,7 +352,7 @@ That is the structural claim of §6, drawn.
         ┌─────────────────┴──┐    ┌────┴──────────────────┐   ┌───────────────┐
         │  SOP SPEC (data)   │    │  DOMAIN ADAPTER       │   │ OBSERVABILITY │
         │  phases · gates    │    │  fixtures · tools     │   │ trace · audit │
-        │  scopes · tools    │    │  identity matcher     │   │ cost · replay │
+        │  scopes · tools    │    │  identity matcher     │   │ cost · export │
         │  directives        │    │  guideline KB         │   └───────────────┘
         │ ─────────────────  │    └───────────┬───────────┘
         │ insurance_claims   │                │
@@ -1472,45 +1472,55 @@ four-day budget.
 - **P2** — strong signal, cheap, not load-bearing. Built if the schedule holds.
 - **P3** — right direction, deliberately not built in four days; documented so the reasoning survives.
 
-### 9.2 The ranked backlog
+### 9.2 The ranked backlog, and what was actually built
 
-| P | Item | Why this rank | Day |
+Ranked before the work started; the **Status** column was added afterwards and is checked against the
+repo rather than remembered. A backlog with no status column is a wish list.
+
+| P | Item | Status | Why this rank |
 |---|---|---|---|
-| **P0** | Deterministic identity matcher + factor gate (aliases, `id_type`, normalisation, mismatch policy) | R3; the one place where being wrong is irreversible | D1 |
-| **P0** | Phase machine + pure policy resolver | R1/R2; every other component reads its output | D1 |
-| **P0** | Context-level disclosure control (visibility as a phase property) | R3; the structural claim of the whole design | D1 |
-| **P0** | Unconditional extraction + provenance memory + supersede | R8; also the input to everything downstream | D1 |
-| **P0** | SOP spec loader (engine / spec split) | Architectural (§6). Retrofitting it later touches every file | D1 |
-| **P0** | Tool registry with per-phase permissions | R2; the mechanism H3 depends on | D1 |
-| **P0** | Output guard: disclosure · grounding · commitment · contract | R3/R5; also the enforcement arm of R9's contract | D2 |
-| **P0** | Scope rings + three-strike escalation + budget | R7 | D2 |
-| **P0** | Emotion signals + persuasion ladder | R9 is explicitly scored, and it is what makes strictness tolerable | D2 |
-| **P0** | Grounded `PROCESS_CASE` answering over claims + guideline KB | R5; the phase where the caller's problem is actually solved | D2 |
-| **P0** | `POST_PROCESS` summary + send/skip/edit action gate | R6 | D3 |
-| **P0** | Chat UI + SSE streaming | R10 ("a simple test UI") | D3 |
-| **P0** | Unit tests for the deterministic core | The claim "the safety core doesn't depend on a model" has to be demonstrable | D1–D2 |
-| **P0** | Docker + hosted URL + token configuration | R10 | D4 |
-| **P0** | Sentence-level commit protocol + per-phase `stream` policy (§7.11) | Without it the guard and streaming are mutually exclusive, and buffering everything makes the demo feel dead | D3 |
-| **P1** | Commitment red-team set + catch-rate report | Rule ③ is the one guard whose efficacy cannot be assumed from its construction | D3 |
-| **P1** | **Inspector panel** | Highest demo-value per hour; the data already exists, so it is mostly rendering | D3 |
-| **P1** | **Eval harness + invariants + adversarial suite** | The difference between "it worked when I tried it" and "here is the pass matrix"; also §12's foundation | D3 |
-| **P1** | **Alternative ladder** | Largest single lever on containment (§7.6); grounded in fixture data already present | D2 |
-| **P1** | **Handoff packet** | Makes transfer a feature instead of a failure; directly reduces the buyer's handle time | D2 |
-| **P1** | **Audit export (JSONL + HTML) + PHI access log** | Compliance is the actual purchase decision; near-free given tracing | D3 |
-| **P1** | **Cost accounting + static tier routing + prompt caching** | The "affordable" half of the mission, with numbers instead of adjectives | D3 |
-| **P1** | **Representative + asynchronous consent (incl. timeout)** | Two fixture files exist solely for it; the timeout branch is where graceful degradation is proven | D2 |
-| **P2** | Second SOP (`bank_kyc.yaml`) + live switch | Cheap once §6 is real, and it is the whole generality argument | D4 — **done, honestly scoped**: proves the control layer (spec.py/machine.py — phases, gates, freedom, tool permissions, escalation, directives) has zero insurance-specific code, checked by `tests/test_bank_kyc_spec.py` including a static import-graph assertion. Does **not** yet prove the full runtime is pluggable — `policy.py`'s visible-facts assembly still calls insurance-shaped domain functions, so a `bank_kyc` session verifies identity correctly and then reads insurance fixture data past that point. A real second vertical additionally needs a small pluggable domain-adapter interface (the "DOMAIN ADAPTER" box in §5.1 was already drawn separately from "SOP SPEC" for this reason) — that abstraction is scoped, not built. |
-| **P2** | Replay / time-travel debugging | Strong engineering signal; small once tracing exists | D4 |
-| **P2** | LLM judge for empathy/naturalness | Needed to claim R9 quantitatively rather than by demo | D3 |
-| **P2** | Typo-noise eval axis | Very cheap, and it tests the channel this product actually has | D3 |
-| **P2** | Extraction golden set + fast-vs-strong tier benchmark | Turns the tier choice from an assumption into a measurement | D3 |
-| **P2** | `reset` / `step` RL-environment adapter | ~40 lines over the eval runner; sets up §12 | D4 |
-| **P3** | SOP compiled from a customer's existing SOP document | The real unlock for "accessible" (§12 Stage 2) | — |
-| **P3** | Distillation / training loop on captured traffic | The real unlock for "affordable" (§12 Stage 3) | — |
-| **P3** | Voice input, multilingual | The fixtures point at both; neither is a design change, both are scope | — |
-| **P3** | Session resume after a dropped call | The interesting part is the *policy* — re-verify identity, retain memory — which we state rather than build | — |
-| **P3** | Adaptive tier routing controller | Building a controller before having the measurement that sets its thresholds ships an unfalsifiable feature | — |
-| **P3** | Indirect injection via uploaded documents; multi-tenant spec registry, versioning, A/B | Real attack surface / real platform needs, but neither exists in this scope | — |
+| **P0** | Deterministic identity matcher + factor gate (aliases, `id_type`, normalisation, mismatch policy) | **done** `app/identity/matcher.py` | R3; the one place where being wrong is irreversible |
+| **P0** | Phase machine + pure policy resolver | **done** `app/sop/{machine,policy}.py` | R1/R2; every other component reads its output |
+| **P0** | Context-level disclosure control (visibility as a phase property) | **done** — attribution `R1_…` 8/8 | R3; the structural claim of the whole design |
+| **P0** | Unconditional extraction + provenance memory + supersede | **done** `app/llm/extraction.py` | R8; also the input to everything downstream |
+| **P0** | SOP spec loader (engine / spec split) | **done** `app/sop/spec.py` | Architectural (§6). Retrofitting it later touches every file |
+| **P0** | Tool registry with per-phase permissions | **done** — attribution `R4_…` 43/43 | R2; the mechanism H3 depends on |
+| **P0** | Output guard | **done, and grew a fifth rule** (§7.9) | R3/R5; also the enforcement arm of R9's contract |
+| **P0** | Scope rings + three-strike escalation + budget | **done** | R7 |
+| **P0** | Emotion signals + persuasion ladder | **done** — and was *unenforced* until §8.8 caught it | R9 is explicitly scored, and it is what makes strictness tolerable |
+| **P0** | Grounded `PROCESS_CASE` answering over claims + guideline KB | **done** | R5; the phase where the caller's problem is actually solved |
+| **P0** | `POST_PROCESS` summary + send/skip action gate | **done** — attribution `R7_…` 3/3 | R6 |
+| **P0** | Chat UI + streaming | **done** `frontend/src/components/Chat.jsx` | R10 ("a simple test UI") |
+| **P0** | Unit tests for the deterministic core | **done** — 302 tests, zero model calls | "The safety core doesn't depend on a model" has to be demonstrable |
+| **P0** | Docker + hosted URL + token configuration | **done** `Dockerfile`, `fly.toml` | R10 |
+| **P0** | Sentence-level commit protocol + per-phase `stream` policy | **done** (§7.11) | Without it the guard and streaming are mutually exclusive |
+| **P1** | **Eval harness + invariants + adversarial suite** | **done, and extended well past the original scope** — attribution, coverage, hostile model, static architecture claims, simulator (§8.7–8.9) | The difference between "it worked when I tried it" and "here is the pass matrix" |
+| **P1** | **Inspector panel** | **done** | Highest demo-value per hour; the data already exists |
+| **P1** | **Alternative ladder** | **done** — scenario `09_…` | Largest single lever on containment (§7.6) |
+| **P1** | **Handoff packet** | **done** `app/sop/handoff.py` | Makes transfer a feature instead of a failure |
+| **P1** | **Audit export (JSONL + HTML)** | **done** `app/obs/export.py` | Compliance is the actual purchase decision |
+| **P1** | **Cost accounting + static tier routing** | **done** `evals/cost_experiment.py` | The "affordable" half of the mission, with numbers instead of adjectives |
+| **P1** | **Representative + asynchronous consent (incl. timeout)** | **done** — scenarios `05_`, `06_` | Two fixture files exist solely for it; the timeout branch proves graceful degradation |
+| **P1** | Prompt caching | **not built** | Real saving, but it changes cost without changing behaviour, so it lost to work that changes what can be *proved* |
+| **P1** | Commitment red-team set + catch-rate report | **superseded** by the hostile-model run (§8.7), which red-teams *all five* guard families rather than one | Rule ③ is the guard whose efficacy cannot be assumed from its construction |
+| **P2** | Second SOP (`bank_kyc.yaml`) + live switch | **done, honestly half** — proves the *spec* layer carries no insurance assumptions (`tests/test_bank_kyc_spec.py`, incl. a static import-graph assertion). Does **not** prove the runtime is pluggable: `policy.py` still calls insurance-shaped domain functions, so a `bank_kyc` session verifies identity and then reads insurance fixtures. §11.7, §13.4 | Cheap once §6 is real, and it is the whole generality argument |
+| **P2** | Typo-noise eval axis | **done** `evals/typo_noise.py` | Very cheap, and it tests the channel this product actually has |
+| **P2** | Operations board + disposition codes | **done** (§8.5, §7.14) — *not in the original backlog*; added after live testing showed a single chat window cannot answer an operator's question | Where do calls stop, and which need a person |
+| **P2** | Replay / time-travel debugging | **not built** — the trace carries everything needed; the replayer does not exist | Strong engineering signal; small once tracing exists |
+| **P2** | LLM judge for empathy/naturalness | **not built, deliberately** (EVAL.md §10) — a judge model's score moves for reasons nobody can act on | Needed to claim R9 quantitatively rather than by demo |
+| **P2** | Extraction golden set + fast-vs-strong tier benchmark | **not built** — the cost experiment covers the tier question end-to-end, which was the decision it was for | Turns the tier choice from an assumption into a measurement |
+| **P2** | `reset` / `step` RL-environment adapter | **not built** — the reward function and dynamics are real and run every eval; the thin adapter over them is not written (see `evals/runner.py`) | ~40 lines over the eval runner; sets up §12 |
+| **P3** | SOP compiled from a customer's existing SOP document | not built — §12 Stage 2, §13.5 | The real unlock for "accessible" |
+| **P3** | Distillation / training loop on captured traffic | not built — §12 Stage 3, §13.6 | The real unlock for "affordable" |
+| **P3** | Voice input, multilingual | not built | The fixtures point at both; neither is a design change, both are scope |
+| **P3** | Session resume after a dropped call | **partly** — sessions persist and rehydrate (`app/session/persistence.py`); the re-verification *policy* on resume is stated, not built | The interesting part is the policy — re-verify identity, retain memory |
+| **P3** | Adaptive tier routing controller | not built | Building a controller before having the measurement that sets its thresholds ships an unfalsifiable feature |
+| **P3** | Indirect injection via uploaded documents; multi-tenant spec registry, versioning, A/B | not built | Real attack surface / real platform needs, but neither exists in this scope |
+
+Two entries are worth reading as a pair. **P1 eval harness** was delivered several times larger than
+ranked, because the first version could not see the `SEND_NOW` class of defect at all. **P1 prompt
+caching** was dropped for the opposite reason: it would have made the demo cheaper without making any
+claim more defensible. That trade — measurement over margin — is the one I would defend hardest.
 
 ### 9.3 Simplification log
 
