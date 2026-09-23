@@ -1,8 +1,20 @@
-# SOP Harness — Insurance Claims Support Agent
+# SOP Harness — making an LLM agent follow a business procedure
 
-An SOP harness for an insurance claims support agent: a fixed
-business workflow (`VERIFY_ID → RESOLVE_INTENT → PROCESS_CASE → POST_PROCESS`) that still converses
-naturally, strict where the SOP demands it and flexible where reasoning helps.
+An engine that turns a written standard operating procedure into an **enforced, measurable, auditable**
+conversational agent. The worked instance is insurance claims support — a fixed workflow
+(`VERIFY_ID → RESOLVE_INTENT → PROCESS_CASE → POST_PROCESS`) that still converses naturally, strict
+where the procedure demands it and flexible where reasoning helps — but the engine is not
+insurance-specific.
+
+**The claim this project exists to test:**
+
+> An excellent SOP harness is one whose guarantees do not depend on the model being good.
+
+That is falsifiable, so it is tested. The same suite runs against a deliberately **hostile model** that
+ignores the system prompt and tries to leak case data, promise payouts and invent amounts. Quality
+collapses (pass rate 1.00 → 0.07); safety does not move (zero invariant violations, zero disclosures).
+The harness converts model weakness from a *safety* problem into a *cost* problem — see
+[DESIGN.md §8.7](DESIGN.md).
 
 **Read [DESIGN.md](DESIGN.md) for the full design rationale** — the problem framing, alternatives
 considered, the architecture, and every non-obvious decision with its reasoning. This file is the

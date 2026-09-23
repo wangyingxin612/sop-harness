@@ -1467,7 +1467,7 @@ priority ≈  (evidence value for R1–R10)  ×  (value to a paying customer)
 with one override: **anything other work depends on is promoted**, because sequencing risk dominates a
 four-day budget.
 
-- **P0** — required for the submission to be *correct*, or structurally load-bearing.
+- **P0** — required for the system to be *correct*, or structurally load-bearing.
 - **P1** — turns a correct demo into a credible product; high evidence value; affordable in the box.
 - **P2** — strong signal, cheap, not load-bearing. Built if the schedule holds.
 - **P3** — right direction, deliberately not built in four days; documented so the reasoning survives.
