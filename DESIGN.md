@@ -108,7 +108,7 @@ real path in this repo.
 | R7 | In-scope only; polite refusal; human after repeated attempts | §7.9 | scope ring + **templated** refusals (no prompt to negotiate with) + strike decay | attribution `refusals_are_templated_not_generated`; scenario `03_off_topic_persistence`; invariant `out_of_scope_declined_not_advanced` |
 | R8 | **Remember out-of-phase information** and reuse it later | §7.3 | extraction is unconditional and phase-independent — there is no extractor that *could* miss the hint | scenario `01_margaret_chen_happy_path` (the brief's own example); `tests/test_extraction_parsing.py` |
 | R9 | *Bonus*: recognise frustration, de-escalate, explain the gate, persuade without bypassing, know when to stop | §7.8 | deterministic intensity floor → `ACKNOWLEDGE_EMOTION`; persuasion ladder before any transfer | attribution `R9_empathy_is_instructed_when_the_caller_is_upset`; `tests/test_emotion_floor.py`; scenario `02_frustrated_caller_bonus` |
-| R10 | Delivery: hosted URL or Docker, API token config, test UI, full workflow demo | §10 | `Dockerfile`, `fly.toml`, per-session key in the UI | README quickstart; hosted at `sop-harness-demo.fly.dev` |
+| R10 | Delivery: hosted URL or Docker, API token config, test UI, full workflow demo | §10 | `Dockerfile`, `fly.toml`, per-session key in the UI | README quickstart; `docker run` starts the full stack |
 
 Two of these were satisfied *by the model's good behaviour rather than by the harness* until the
 attribution report said so — R6's send directive never fired once, and R9's empathy was the model
@@ -1543,7 +1543,10 @@ Design review removed six things we had designed ourselves. Recorded because the
 
 - **Docker**: multi-stage build (frontend → static, served by FastAPI). One container,
   `docker run -e ANTHROPIC_API_KEY=... -p 8080:8080`.
-- **Hosted URL** on Fly.io, so a reviewer needs no key and no setup.
+- **One-command Docker image** serving API and built frontend from a single process.
+- **`fly.toml` included** for a hosted deployment. Note that a public deployment holding a server-side
+  API key is an open tap — anyone with the URL can spend against it — so the UI also accepts a
+  per-session key, which is the right default for anything public.
 - **Token configuration** two ways: environment variable, or entered in the UI for the hosted demo —
   satisfying R10 for both delivery modes.
 - **Provider-agnostic**: Anthropic by default; any OpenAI-compatible endpoint via `LLM_BASE_URL`.
